@@ -43,6 +43,35 @@ def get_resource_path(file_name):
 def get_config_path(file_name):
     return os.path.join(get_project_base_directory(), "config", file_name)
 
+
+def get_config(file_name, encoding='utf-8'):
+    """
+    获取配置文件内容
+    
+    Args:
+        file_name (str): 配置文件名
+        encoding (str): 文件编码，默认为utf-8
+    
+    Returns:
+        str: 配置文件内容
+        
+    Raises:
+        FileNotFoundError: 当配置文件不存在时
+        IOError: 当读取文件出错时
+    """
+    config_path = get_config_path(file_name)
+    
+    # 检查文件是否存在
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"配置文件不存在: {config_path}")
+    
+    try:
+        with open(config_path, 'r', encoding=encoding) as f:
+            content = f.read()
+        return content
+    except Exception as e:
+        raise IOError(f"读取配置文件失败 {config_path}: {str(e)}")
+
 def get_storage_path(file_name):
     return os.path.join(get_project_base_directory(), "resource_package", "storage", file_name)
 

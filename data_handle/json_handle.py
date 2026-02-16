@@ -9,6 +9,7 @@ import os
 import common.file_utils as fu
 import ijson
 from multiprocessing import Pool
+from loguru import logger
 
 load_dotenv(dotenv_path=fu.get_config_path('.env'))
 
@@ -47,8 +48,6 @@ class JsonHandle:
     def batch_split_texts(self, texts, batch_size=10_000, metadata_list=None):
         """
         分批分割文本：
-        - 对话文本较长，chunk_size调整为300（适配多轮对话语义）
-        - chunk_overlap调整为30（保留对话上下文关联）
         - 支持将元信息嵌入到每个chunk中
         
         参数:
@@ -81,36 +80,77 @@ class JsonHandle:
 
     def parallel_batch_split_texts(self, texts, batch_size=10_000, metadata_list=None):
         """
-        并行分批分割文本
+        并行分批分割文本，增强元信息处理支持
         
         参数:
             texts: 待分割的文本列表
             batch_size: 批处理大小
-            metadata_list: 对应的元信息列表
+            metadata_list: 对应的元信息列表，每个元素应包含{'id': int, 'tag': str, 'total_turns': int}
+        
+        返回:
+            tuple: (分割后的文本列表, 对应的元信息列表)
         """
+        if metadata_list and len(texts) != len(metadata_list):
+            raise ValueError(f"文本数量({len(texts)})与元信息数量({len(metadata_list)})不匹配")
+        
         split_texts = []
         split_metadata = []
         
+        # 记录处理统计信息
+        total_chunks = 0
+        processed_items = 0
+        
         with Pool(processes=os.cpu_count()) as pool:
             for i in tqdm(range(0, len(texts), batch_size), desc="并行分割文本"):
-                batch = texts[i:i + batch_size]
-                batch_metadata = metadata_list[i:i + batch_size] if metadata_list else [None] * len(batch)
+                batch_start_idx = i
+                batch_end_idx = min(i + batch_size, len(texts))
+                batch = texts[batch_start_idx:batch_end_idx]
+                batch_metadata = metadata_list[batch_start_idx:batch_end_idx] if metadata_list else [None] * len(batch)
                 
                 # 并行处理文本分割
                 results = pool.starmap(self.split_single_text, [(text,) for text in batch])
                 
                 # 处理结果和元信息
-                for res, meta in zip(results, batch_metadata):
-                    split_texts.extend(res)
-                    if meta:
-                        split_metadata.extend([meta.copy() for _ in res])
-                    else:
-                        split_metadata.extend([None for _ in res])
+                for item_idx, (res, meta) in enumerate(zip(results, batch_metadata)):
+                    original_item_idx = batch_start_idx + item_idx
+                    
+                    # 为每个chunk分配元信息
+                    for chunk_idx, chunk_text in enumerate(res):
+                        split_texts.append(chunk_text)
+                        total_chunks += 1
+                        
+                        if meta:
+                            # 复制元信息并添加chunk级别的信息
+                            chunk_meta = meta.copy()
+                            chunk_meta.update({
+                                'original_item_index': original_item_idx,
+                                'chunk_index_in_item': chunk_idx,
+                                'chunk_index_global': total_chunks - 1,
+                                'total_chunks_in_item': len(res)
+                            })
+                            split_metadata.append(chunk_meta)
+                        else:
+                            # 如果没有元信息，创建基础结构
+                            split_metadata.append({
+                                'original_item_index': original_item_idx,
+                                'chunk_index_in_item': chunk_idx,
+                                'chunk_index_global': total_chunks - 1,
+                                'total_chunks_in_item': len(res)
+                            })
+                
+                processed_items += len(batch)
+        
+        logger.info(f"并行分割完成: 处理{processed_items}个原始文本项，生成{total_chunks}个文本块")
+        
+        # 验证结果一致性
+        if len(split_texts) != len(split_metadata):
+            raise RuntimeError(f"结果不一致: 文本块数量({len(split_texts)})≠元信息数量({len(split_metadata)})")
         
         return split_texts, split_metadata
 
 
 # ===================== 核心修改：加载并处理 json 数据 =====================
+# todo 改成边读取边 处理
 def load_json_data(json_name="PsyDTCorpus_train_mulit_turn_packing.json", max_items=3):
     """
     加载PsyDTCorpus_train_mulit_turn_packing.json数据，处理逻辑：
@@ -175,7 +215,16 @@ def load_json_data(json_name="PsyDTCorpus_train_mulit_turn_packing.json", max_it
 
 
 def load_large_json_data(json_name="PsyDTCorpus_train_mulit_turn_packing.json", max_items=3):
+    """
+    加载大型JSON数据文件，使用流式读取避免内存溢出
+    处理逻辑与load_json_data保持一致，返回包含metadata的DataFrame
+    
+    参数:
+        json_name (str): JSON文件名
+        max_items (int): 最大提取条目数，默认3个，None表示提取全部
+    """
     processed_texts = []
+    metadata_list = []
     json_path = fu.get_resource_path(json_name)
     item_count = 0
     
@@ -186,9 +235,14 @@ def load_large_json_data(json_name="PsyDTCorpus_train_mulit_turn_packing.json", 
             if max_items is not None and item_count >= max_items:
                 break
             item_count += 1
+            
+            # 提取核心字段
+            item_id = item.get("id", 0)
             tag = item.get("normalizedTag", "无标签")
             messages = item.get("messages", [])
-            # 拼接逻辑同上
+            total_turns = len(messages)
+            
+            # 拼接多轮对话：按 角色:内容 格式拼接，保留对话上下文
             dialogue_str = f"【标签】{tag}\n【对话】\n"
             for msg in messages:
                 role = msg.get("role", "")
@@ -196,8 +250,19 @@ def load_large_json_data(json_name="PsyDTCorpus_train_mulit_turn_packing.json", 
                 if role and content:
                     role_cn = {"system": "系统提示", "user": "来访者", "assistant": "咨询师"}.get(role, role)
                     dialogue_str += f"{role_cn}：{content}\n"
+            
+            # 添加到结果列表
             processed_texts.append(dialogue_str)
-    return pd.DataFrame({"text": processed_texts})
+            metadata_list.append({
+                'id': item_id,
+                'tag': tag,
+                'total_turns': total_turns
+            })
+    
+    return pd.DataFrame({
+        "text": processed_texts,
+        "metadata": metadata_list
+    })
 
 
 def simple_split(max_items=3):
@@ -235,7 +300,7 @@ def simple_split(max_items=3):
     # 显示元信息示例
     if chunk_metadata and chunk_metadata[0]:
         print(f"示例元信息：{chunk_metadata[0]}")
-    
+
     return valid_text_chunks, chunk_metadata
 
 
@@ -251,14 +316,20 @@ def batch_split(max_items=None, file_name="PsyDTCorpus_train_mulit_turn_packing.
 
     # 3. 提取文本并执行分割
     raw_texts = df_filtered["text"].tolist()
-    valid_text_chunks = handle.parallel_batch_split_texts(
+    metadata_list = df_filtered["metadata"].tolist()
+    valid_text_chunks,chunk_metadata = handle.parallel_batch_split_texts(
         raw_texts,
         batch_size=200,  # 百万级数据可保持此批次大小
+        metadata_list = metadata_list
     )
 
     print(f"文本分割完成：有效文本→{len(valid_text_chunks)}个文本块")
     print(f"示例文本块：\n{valid_text_chunks[0]}")
-    return valid_text_chunks
+    # 显示元信息示例
+    if chunk_metadata and chunk_metadata[0]:
+        print(f"示例元信息：{chunk_metadata[0]}")
+
+    return valid_text_chunks, chunk_metadata
 
 
 def demo_extract_control():
