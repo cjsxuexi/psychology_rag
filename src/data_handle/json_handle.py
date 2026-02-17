@@ -1,12 +1,11 @@
 # %%
 import pandas as pd
-import numpy as np
 import json
 from dotenv import load_dotenv
-from langchain_text_splitters import RecursiveCharacterTextSplitter, CharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from tqdm import tqdm
 import os
-import common.file_utils as fu
+from src import common as fu
 import ijson
 from multiprocessing import Pool
 from loguru import logger

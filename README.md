@@ -11,26 +11,27 @@
 ## 🔧 核心功能模块
 
 ### 1. 核心引擎层
-- **[chat_application.py](application/chat_application.py)**: 心理咨询聊天应用主类，整合检索和生成流程
-- **[milvus_stream_processor.py](data_process/milvus_stream_processor.py)**: Milvus流式数据处理器，负责数据读取、处理和存储
-- **[milvus_storage.py](database/milvus_storage.py)**: Milvus向量数据库存储管理模块
-- **[retrieval_enhanced.py](retrieval_augment/retrieval_enhanced.py)**: 基于LlamaIndex思想的检索增强器，实现重排序功能
+- **[chat_application.py](src/application/chat_application.py)**: 心理咨询聊天应用主类，整合检索和生成流程
+- **[milvus_stream_processor.py](src/data_process/milvus_stream_processor.py)**: Milvus流式数据处理器，负责数据读取、处理和存储
+- **[milvus_storage.py](src/database/milvus_storage.py)**: Milvus向量数据库存储管理模块
+- **[retrieval_enhanced.py](src/retrieval_augment/retrieval_enhanced.py)**: 基于LlamaIndex思想的检索增强器，实现重排序功能
 
 ### 2. 配置管理层
-- **[config/](config/)**: 系统配置文件目录
+- **[config/](src/config/)**: 系统配置文件目录
   - `psychology_prompt.txt`: 心理咨询Prompt模板
   - `prompt_template.txt`: 通用Prompt模板
 
 ### 3. 工具类库
-- **[common/](common/)**: 通用工具类
+- **[common/](src/common/)**: 通用工具类
   - `file_utils.py`: 文件路径管理和配置读取工具
   - `model_util.py`: 模型加载和管理工具，支持模型缓存避免重复加载
 
 ## 🚀 快速开始
 
 ### 1. 系统启动
+
 ```python
-from application.chat_application import PsychologyChatBot
+from src.application import PsychologyChatBot
 
 # 初始化聊天机器人
 chatbot = PsychologyChatBot(
@@ -56,8 +57,9 @@ response = chatbot.chat("我最近总是感到焦虑怎么办？")
 ```
 
 ### 3. 数据处理
+
 ```python
-from data_process.milvus_stream_processor import stream_process_psychology_data_milvus
+from src.data_process.milvus_stream_processor import stream_process_psychology_data_milvus
 
 # 流式处理心理学数据
 result = stream_process_psychology_data_milvus(

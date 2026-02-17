@@ -20,7 +20,7 @@ MYSQL_PASSWORD=infini_rag_flow  # 密码
 ### 1. 默认使用环境变量（推荐）
 
 ```python
-from database.mysql_storage import MySQLStorage
+from src.database.mysql_storage import MySQLStorage
 
 # 自动从config/.env加载配置
 storage = MySQLStorage()
@@ -30,7 +30,7 @@ storage.connect()
 ### 2. 使用上下文管理器
 
 ```python
-from database.mysql_storage import MySQLStorageManager
+from src.database.mysql_storage import MySQLStorageManager
 
 # 自动管理连接和断开
 with MySQLStorageManager() as storage:
@@ -71,7 +71,7 @@ storage = MySQLStorage(config=config, use_env=False)
 ### 5. 自定义环境变量文件路径
 
 ```python
-from database.mysql_storage import load_env_config
+from src.database.mysql_storage import load_env_config
 
 # 使用自定义的环境变量文件
 custom_env_path = '/path/to/custom.env'

@@ -7,9 +7,9 @@ import os
 from typing import Dict, List, Optional
 
 # 复用m3e单例模型（原有核心，无需修改）
-from embedding.M3EEmbedding import M3EEmbeddingSingleton
+from src.embedding.M3EEmbedding import M3EEmbeddingSingleton
 
-from common.file_utils import get_config_path, get_storage_path
+from src.common.file_utils import get_config_path, get_storage_path
 
 # ===================== 企业级初始化：加载配置、复用单例模型 =====================
 load_dotenv(dotenv_path=get_config_path('.env'))
@@ -246,7 +246,7 @@ class EnterpriseRAGPipeline:
         Returns:
             EnterpriseRAGPipeline: 配置好的RAG流水线实例
         """
-        from application.local_loader import load_local_rag_components
+        from src.application.local_loader import load_local_rag_components
         
         try:
             logger.info("正在从本地存储加载RAG组件...")

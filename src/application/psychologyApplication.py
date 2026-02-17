@@ -1,7 +1,9 @@
 from loguru import logger
 
-from data_handle.json_handle import batch_split
-from database.mysql_storage import MySQLStorage
+from src.data_handle.json_handle import batch_split
+from src.database.mysql_storage import MySQLStorage
+from src.embedding.M3EEmbedding import generate_dense_embeddings_with_m3e, reduce_dimensionality
+from storage.Faiss_storage import build_faiss_index
 
 
 class PsychologyApplication:
@@ -18,7 +20,27 @@ class PsychologyApplication:
         """
         运行应用程序
         """
+        # 测试时可以调小该值。max_items=10
         self.process_and_store_json_data()
+        # 从key_storage读取每条 数据
+
+    def run(self):
+        source_document = "psychology_dialogues"
+        datas = self.key_storage.get_chunks_by_source_and_indices(source_document)
+        dense_embeddings = generate_dense_embeddings_with_m3e(datas)
+
+        # 验证向量格式（确保与后续 PCA、FAISS 兼容）
+        logger.info(f"m3e 向量验证：维度 {dense_embeddings.shape[1]}，数据类型 {dense_embeddings.dtype}")
+        print(f"\n示例向量形状：{dense_embeddings.shape}")
+
+        # 对稠密向量进行降维
+        dense_embeddings_reduced, pca_model, scaler_model = reduce_dimensionality(
+            dense_embeddings,
+            variance_threshold=0.95  # 保留95%的语义方差，平衡效率与效果
+        )
+
+        # 构建百万级（演示10万条）FAISS索引
+        faiss_index = build_faiss_index(dense_embeddings_reduced)
 
     def process_and_store_json_data(self, max_items=None, source_document="psychology_dialogues", batch_size=1000):
         """
@@ -41,7 +63,7 @@ class PsychologyApplication:
 
             # 2. 使用JsonHandle.simple()处理数据
             logger.info("正在处理JSON数据...")
-            chunks, chunk_metadata = batch_split(max_items=max_items)
+            chunks, chunk_metadata = batch_split(max_items)
 
             logger.info(f"✅ 处理完成，共生成 {len(chunks)} 个文本块")
 
@@ -56,19 +78,19 @@ class PsychologyApplication:
                 batch_end = min(i + batch_size, len(chunks))
                 batch_chunks = chunks[i:batch_end]
                 batch_metadata = chunk_metadata[i:batch_end] if chunk_metadata else None
-                
+
                 logger.info(f"处理批次 {i//batch_size + 1}: {len(batch_chunks)} 个文本块")
-                
+
                 # 批量存储当前批次
                 batch_chunk_ids = self.key_storage.store_chunks(
                     chunks=batch_chunks,
                     source_document=source_document,
                     metadata_list=batch_metadata
                 )
-                
+
                 all_chunk_ids.extend(batch_chunk_ids)
                 total_processed += len(batch_chunk_ids)
-                
+
                 logger.success(f"✅ 批次 {i//batch_size + 1} 存储完成，本次存储 {len(batch_chunk_ids)} 个文本块")
 
             logger.success(f"✅ 批量存储完成，总共存储 {total_processed} 个文本块到数据库")

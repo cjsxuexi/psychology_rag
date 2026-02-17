@@ -36,11 +36,12 @@ env/
 *~
 
 # Configuration
-config/.env
+src/config/.env
 .env
 
 # Modules
 resource_package/models
+src/resource_package/models
 
 # Logs
 *.log

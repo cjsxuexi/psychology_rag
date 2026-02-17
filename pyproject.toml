@@ -11,17 +11,19 @@ dependencies = [
     "ijson>=3.4.0.post0",
     "langchain>=1.2.7",
     "langchain-text-splitters>=1.1.0",
-    "loguru>=0.7.3",
+    "loguru>=0.7.3",    # 企业级日志（替代原生logging，更易用）
     "mysql-connector-python>=8.0.0",
     "numpy>=2.4.1",
     "openai>=2.16.0",
     "pandas>=3.0.0",
-    "python-dotenv>=1.2.1",
+    "python-dotenv>=1.2.1", # 环境变量加载
     "scikit-learn>=1.8.0",
     "sentence-transformers>=5.2.2",
     "torch>=2.10.0",
     "tqdm>=4.67.2",
     "transformers>=5.0.0",
+    "llama-index-core>=0.10.0",      # LlamaIndex核心库
+    "pydantic>=2.0.0",                # 配置校验（企业级数据校验）
 ]
 
 [[tool.uv.index]]

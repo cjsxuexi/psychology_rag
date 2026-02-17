@@ -20,15 +20,15 @@ from pymilvus import (
     Collection, CollectionSchema, FieldSchema, DataType
 )
 
-from data_process.base_stream_processor import (
+from src.data_process.base_stream_processor import (
     estimate_processing_time,
     cleanup_checkpoints,
     get_system_recommendations
 )
-from common.file_utils import get_resource_path
-from data_handle.json_handle import JsonHandle
-from database.milvus_storage import create_milvus_storage
-from embedding.M3EEmbedding import generate_dense_embeddings_with_m3e
+from src.common.file_utils import get_resource_path
+from src.data_handle.json_handle import JsonHandle
+from src.database.milvus_storage import create_milvus_storage
+from src.embedding.M3EEmbedding import generate_dense_embeddings_with_m3e
 from .base_stream_processor import BaseStreamProcessor
 
 # GPU内存监控（如果可用）

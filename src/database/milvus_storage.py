@@ -6,7 +6,7 @@ Milvus向量数据库存储管理模块
 """
 
 import time
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict
 import numpy as np
 
 from loguru import logger
@@ -260,7 +260,7 @@ class MilvusStorage:
                 output_fields = ["content", "tag", "total_turns"]
 
             # 生成查询向量
-            from embedding.M3EEmbedding import generate_dense_embeddings_with_m3e
+            from src.embedding.M3EEmbedding import generate_dense_embeddings_with_m3e
             query_embedding = generate_dense_embeddings_with_m3e([query_text])[0]
 
             # 执行搜索

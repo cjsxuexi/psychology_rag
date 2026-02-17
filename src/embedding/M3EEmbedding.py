@@ -1,18 +1,15 @@
-import pandas as pd
 import numpy as np
-import json
 import os
 
 import torch
 from dotenv import load_dotenv
 from loguru import logger
 from sentence_transformers import SentenceTransformer
-from tqdm import tqdm
-from common.model_util import load_model
-from common.file_utils import get_config_path
+from src.common import load_model
+from src.common.file_utils import get_config_path
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
-
+import threading
 # ===================== 企业级初始化：加载配置、日志、单例模型 =====================
 # 加载 .env 配置
 load_dotenv(dotenv_path=get_config_path('.env'))
@@ -28,15 +25,26 @@ CONFIG = {
 }
 
 
-# 单例模式加载 m3e-base 模型（避免重复加载，节省内存，企业级最佳实践）
+# 单例模式加载 m3e-base 模型（避免重复加载，节省内存）
 class M3EEmbeddingSingleton:
     _instance = None
-    _model = None
+    _lock = threading.Lock()
+    _initialized = False
 
     def __new__(cls):
         if cls._instance is None:
-            cls._instance = super(M3EEmbeddingSingleton, cls).__new__(cls)
-            cls._load_model()
+            with cls._lock:
+                # 双重检查锁定模式
+                if cls._instance is None:
+                    cls._instance = super(M3EEmbeddingSingleton, cls).__new__(cls)
+                    try:
+                        cls._load_model()
+                        cls._initialized = True
+                    except Exception as e:
+                        # 清理失败的实例
+                        cls._instance = None
+                        cls._initialized = False
+                        raise RuntimeError(f"Failed to initialize M3E embedding model: {str(e)}")
         return cls._instance
 
     @classmethod
@@ -71,9 +79,10 @@ class M3EEmbeddingSingleton:
                 batch_size=batch_size,
                 show_progress_bar=True,
                 convert_to_numpy=True,
-                dtype=np.float32,  # 与 FAISS 兼容，企业级存储优化
                 normalize_embeddings=True  # 向量归一化，提升检索效果
             )
+            # 转换数据类型以兼容 FAISS（SentenceTransformer.encode 不接受 dtype 参数）
+            embeddings = embeddings.astype(np.float32)
             logger.success(f"向量生成完成，向量形状：{embeddings.shape}")
             return embeddings
         except Exception as e:
@@ -85,7 +94,7 @@ class M3EEmbeddingSingleton:
 m3e_embedding = M3EEmbeddingSingleton()
 
 
-# ===================== 步骤 2：生成 m3e-base 稠密向量（替换 OpenAI） =====================
+# ===================== 步骤 2：生成 m3e-base 稠密向量 =====================
 def generate_dense_embeddings_with_m3e(texts):
     """
     企业级向量生成：调用 m3e 单例模型，批量生成，格式兼容后续流程
@@ -117,20 +126,10 @@ def reduce_dimensionality(embeddings, target_dim=256, variance_threshold=0.95):
 
     return embeddings_reduced, pca, scaler
 
-# ===================== 主执行流程（企业级闭环，可直接部署） =====================
+# ===================== 主执行流程 =====================
 import logging
 import traceback
-import data_handle.json_handle as rag  # 将导入语句移至顶部
-
-
-# def generate_dense_embeddings_with_m3e(text_chunks):
-#     """
-#     示例函数：模拟生成稠密向量。
-#     实际使用时应替换为真实实现。
-#     """
-#     # 模拟返回一个 NumPy 数组
-#     import numpy as np
-#     return np.random.rand(len(text_chunks), 768)  # 假设维度为 768
+import src.data_handle.json_handle as rag  # 将导入语句移至顶部
 
 
 if __name__ == "__main__":
@@ -140,7 +139,7 @@ if __name__ == "__main__":
 
     try:
         # 步骤 1：获取有效文本块
-        valid_text_chunks = rag.batch_test()
+        valid_text_chunks = rag.batch_split()
 
         # 步骤 2：生成 m3e-base 稠密向量（替换原 OpenAI 向量生成）
         # 演示：取前 1000 条文本块（百万级可直接使用 valid_text_chunks）

@@ -2,7 +2,7 @@ import os
 
 from huggingface_hub import snapshot_download
 
-from common.file_utils import get_project_base_directory
+from src.common.file_utils import get_project_base_directory
 
 def load_model(model_name: str)-> str:
     """

@@ -9,7 +9,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from data_process.milvus_stream_processor import MilvusStreamProcessor, stream_process_psychology_data_milvus
+from src.data_process.milvus_stream_processor import MilvusStreamProcessor, stream_process_psychology_data_milvus
 from loguru import logger
 import time
 

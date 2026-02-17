@@ -9,15 +9,15 @@ from typing import List, Dict
 
 from loguru import logger
 
-from common.file_utils import get_config
+from src.common.file_utils import get_config
 
 # 添加项目根目录到Python路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # 导入核心组件
-from data_process.milvus_stream_processor import MilvusStreamProcessor
-from retrieval_augment.retrieval_enhanced import RetrievalEnhanced
-from application.app1 import call_qwen_plus
+from src.data_process.milvus_stream_processor import MilvusStreamProcessor
+from src.retrieval_augment.retrieval_enhanced import RetrievalEnhanced
+from src.application.app1 import call_qwen_plus
 
 
 class PsychologyChatBot:

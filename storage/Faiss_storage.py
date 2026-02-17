@@ -1,42 +1,88 @@
 import os
-from typing import List
+from typing import List, Dict, Optional, Tuple
 
 import faiss
 import numpy as np
 from dotenv import load_dotenv
 from loguru import logger
 
-from common.file_utils import get_config_path
+from src.common.file_utils import get_config_path, get_storage_path
+from src.database.mysql_storage import MySQLStorage
 
 
-def build_faiss_index(embeddings, index_type="hnsw_pq", save_path="faiss_million_index.index"):
+def build_faiss_index(embeddings, 
+                     index_type="hnsw_pq", 
+                     save_path="faiss_million_index.index",
+                     text_chunks: List[str] = None,
+                     source_document: str = None,
+                     metadata_list: List[Dict] = None) -> Tuple[faiss.Index, Optional[List[int]]]:
     """
-    构建FAISS索引：
+    构建FAISS索引（增强版）：
     - hnsw_pq：HNSW（ANN）+ PQ（乘积量化），适合百万级数据
     - 支持保存索引，后续可直接加载使用
+    - 可选：同步存储文本块到MySQL数据库
+    
+    Args:
+        embeddings: 向量数组
+        index_type: 索引类型
+        save_path: 索引保存路径
+        text_chunks: 对应的文本块列表（可选）
+        source_document: 源文档标识（可选）
+        metadata_list: 文本块元数据列表（可选）
+        
+    Returns:
+        Tuple[faiss.Index, Optional[List[int]]]: (FAISS索引对象, 存储的chunk IDs)
     """
     dim = embeddings.shape[1]
     index = None
+    chunk_ids = None
+    
+    # 如果提供了文本块和MySQL配置，则存储到数据库
+    if text_chunks and len(embeddings) == len(text_chunks):
+        try:
+            logger.info("检测到文本块和MySQL配置，开始同步存储...")
+            mysql_storage = MySQLStorage()
+            if mysql_storage.connect():
+                # 存储文本块
+                chunk_ids = mysql_storage.store_chunks(
+                    chunks=text_chunks,
+                    source_document=source_document,
+                    metadata_list=metadata_list
+                )
+                logger.success(f"成功存储 {len(chunk_ids)} 个文本块到MySQL")
+                mysql_storage.disconnect()
+            else:
+                logger.warning("MySQL连接失败，跳过文本块存储")
+        except Exception as e:
+            logger.error(f"存储文本块到MySQL失败: {str(e)}")
 
     if index_type == "hnsw_pq":
         # 1. 配置HNSW参数（平衡检索速度与召回率）
         hnsw_m = 32  # 每个节点的邻居数，越大召回率越高，速度越慢
         hnsw_ef_construction = 200  # 构建索引时的探索范围，越大索引质量越高，构建越慢
 
-        # 2. 配置PQ参数（乘积量化）
-        pq_m = 16  # 将向量切分为16个子向量
+        # 2. 动态计算有效的PQ参数（确保维度兼容性）
+        # 获取有效的子量化器数量M（满足 dim % M == 0）
+        valid_ms = [m for m in [32, 16, 8, 4, 2, 1] if dim % m == 0 and m > 0]
+        if not valid_ms:
+            # 如果没有合适的M值，选择能整除dim的最大正整数
+            valid_ms = [m for m in range(1, dim + 1) if dim % m == 0]
+        
+        pq_m = max(valid_ms)  # 选择最大的M值以获得更好的压缩效果
         pq_nbits = 8  # 每个子向量量化为8比特
+        
+        logger.info(f"PQ参数计算完成：维度={dim}, M={pq_m}, 满足条件: {dim}%{pq_m}={dim % pq_m}")
 
         # 3. 初始化索引：HNSW + PQ
         quantizer = faiss.IndexHNSWFlat(dim, hnsw_m)
         quantizer.hnsw.efConstruction = hnsw_ef_construction
         index = faiss.IndexPQ(dim, pq_m, pq_nbits, faiss.METRIC_L2)
-        index.train(embeddings)  # PQ需要先训练量化器
+        index.train(len(embeddings), embeddings)  # PQ需要先训练量化器
         index.add(embeddings)  # 添加降维后的向量
 
         # 4. 关联HNSW量化器，提升检索速度
         index = faiss.IndexIVFFlat(quantizer, dim, 100, faiss.METRIC_L2)
-        index.train(embeddings)
+        index.train(len(embeddings), embeddings)
         index.add(embeddings)
 
     elif index_type == "flat":
@@ -45,11 +91,31 @@ def build_faiss_index(embeddings, index_type="hnsw_pq", save_path="faiss_million
         index.add(embeddings)
 
     # 5. 保存索引到本地
-    path = "resource_package/storage" + save_path
+    path = get_storage_path(save_path.lstrip('/'))  # 移除开头的斜杠
+    
+    # 确保目录存在
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    
     faiss.write_index(index, path)
     print(f"FAISS索引构建完成，已保存至{path}")
+    
+    # 如果存储了文本块，创建向量映射关系
+    if chunk_ids:
+        try:
+            mysql_storage = MySQLStorage()
+            if mysql_storage.connect():
+                vector_indices = list(range(len(chunk_ids)))
+                mysql_storage.create_vector_mapping(
+                    chunk_ids=chunk_ids,
+                    vector_indices=vector_indices,
+                    faiss_index_name=save_path
+                )
+                logger.success("向量-文本块映射关系创建完成")
+                mysql_storage.disconnect()
+        except Exception as e:
+            logger.error(f"创建向量映射关系失败: {str(e)}")
 
-    return index
+    return index, chunk_ids
 
 
 # ===================== 加载配置（企业级解耦） =====================
@@ -156,7 +222,7 @@ def build_faiss_index_enterprise(embeddings: np.ndarray,
             if embeddings_count < 1000:
                 logger.warning(f"PQ 训练数据量不足（{embeddings_count} < 1000），可能影响量化精度，建议补充数据")
             logger.info(f"开始训练 PQ 量化器（M={pq_m}，nbits={pq_nbits}）")
-            index.train(embeddings)
+            index.train(len(embeddings), embeddings)
             index.add(embeddings)
             logger.success("PQ 量化器训练完成，向量已添加至索引（FAISS 1.13.2）")
 
@@ -168,7 +234,7 @@ def build_faiss_index_enterprise(embeddings: np.ndarray,
                 faiss.ScalarQuantizer.QT_8bit,  # 位置2：量化类型（纯位置）
                 faiss.METRIC_L2  # 位置3：距离度量（纯位置）
             )
-            index.train(embeddings)
+            index.train(len(embeddings), embeddings)
             index.add(embeddings)
             logger.success("SQ 标量量化索引构建完成（FAISS 1.13.2）")
 
@@ -185,7 +251,12 @@ def build_faiss_index_enterprise(embeddings: np.ndarray,
             logger.success("无量化 HNSW 索引构建完成（FAISS 1.13.2）")
 
         # 3. 保存索引（FAISS 1.13.2 支持持久化，兼容 NumPy 2.4.1）
-        path = "resource_package/storage" + index_save_path
+        # 使用 get_storage_path 确保路径正确且目录存在
+        path = get_storage_path(index_save_path.lstrip('/'))  # 移除开头的斜杠
+        
+        # 确保目录存在
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        
         faiss.write_index(index, path)
         logger.success(f"FAISS 索引构建完成（1.13.2），已保存至：{path}，索引维度：{index.d}")
         return index

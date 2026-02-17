@@ -6,7 +6,7 @@ from sentence_transformers import CrossEncoder
 # 注意：如果common.model_util不存在，需确保load_model方法能正确返回模型路径
 # 这里为了代码可运行性，临时定义一个mock的load_model（实际使用时替换为你的真实实现）
 try:
-    from common.model_util import load_model
+    from src.common import load_model
 except ImportError:
     def load_model(model_name: str) -> str:
         """模拟load_model，直接返回模型名（实际场景请替换为真实逻辑）"""

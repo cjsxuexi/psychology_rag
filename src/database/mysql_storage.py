@@ -9,10 +9,10 @@ import json
 import hashlib
 import os
 from dotenv import load_dotenv
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional
 from loguru import logger
 from datetime import datetime
-from common.file_utils import get_config_path
+from src.common.file_utils import get_config_path
 
 # ===================== 企业级初始化：加载配置 =====================
 # 加载 .env 配置
@@ -88,7 +88,7 @@ class MySQLStorage:
                 chunk_index INT COMMENT '在源文档中的索引',
                 metadata JSON COMMENT '额外元数据',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                INDEX idx_source_doc (source_document),
+                INDEX idx_sourceDoc_chunkIndex (source_document,chunk_index),
                 INDEX idx_created_at (created_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='文本块存储表';
             """
@@ -101,9 +101,8 @@ class MySQLStorage:
                 vector_index INT NOT NULL COMMENT 'FAISS向量索引',
                 faiss_index_name VARCHAR(200) NOT NULL COMMENT 'FAISS索引文件名',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (chunk_id) REFERENCES text_chunks(id) ON DELETE CASCADE,
                 UNIQUE KEY uk_vector_index (faiss_index_name, vector_index),
-                INDEX idx_chunk_id (chunk_id),
+                INDEX idx_chunk_id (chunk_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='向量-文本块映射表';
             """
             
@@ -315,6 +314,82 @@ class MySQLStorage:
         except Error as e:
             logger.error(f"批量查询文本块失败: {str(e)}")
             raise
+    
+    def get_chunks_by_source_and_indices(self, source_document: str, 
+                                       chunk_indices: Optional[List[int]] = None) -> List[Dict]:
+        """
+        根据源文档和chunk索引列表获取除created_at外的全部信息
+        
+        Args:
+            source_document: 源文档标识
+            chunk_indices: chunk索引列表，为None或空列表时查询该source_document的全部记录
+            
+        Returns:
+            List[Dict]: 文本块信息列表（不包含created_at字段）
+        """
+        if not source_document:
+            raise ValueError("source_document不能为空")
+            
+        if not self.connection or not self.connection.is_connected():
+            self.connect()
+            # raise Exception("数据库未连接")
+        
+        try:
+            cursor = self.connection.cursor(dictionary=True)
+            
+            # 构建查询条件
+            params = [source_document]
+            
+            if chunk_indices and len(chunk_indices) > 0:
+                # 当提供了chunk_indices时，使用IN查询
+                placeholders = ','.join(['%s'] * len(chunk_indices))
+                where_clause = f"source_document = %s AND chunk_index IN ({placeholders})"
+                params.extend(chunk_indices)
+            else:
+                # 当chunk_indices为空或None时，查询该source_document的全部记录
+                where_clause = "source_document = %s"
+            
+            # 查询语句，排除created_at字段，使用参数化查询防止SQL注入
+            query = f"""
+            SELECT id, chunk_hash, chunk_text, source_document, 
+                   chunk_index, metadata
+            FROM text_chunks 
+            WHERE {where_clause}
+            ORDER BY chunk_index ASC
+            """
+            
+            cursor.execute(query, params)
+            results = cursor.fetchall()
+            cursor.close()
+            
+            # 解析元数据
+            for result in results:
+                if result.get('metadata'):
+                    try:
+                        result['metadata'] = json.loads(result['metadata'])
+                    except json.JSONDecodeError:
+                        logger.warning(f"无法解析metadata JSON: {result['metadata']}")
+                        result['metadata'] = {}
+                
+                # 确保返回字段的一致性和完整性
+                result.update({
+                    'id': result.get('id'),
+                    'chunk_hash': result.get('chunk_hash'),
+                    'chunk_text': result.get('chunk_text'),
+                    'source_document': result.get('source_document'),
+                    'chunk_index': result.get('chunk_index'),
+                    'metadata': result.get('metadata', {})
+                })
+            
+            action_desc = "全部记录" if not chunk_indices else f"{len(chunk_indices)}个指定索引"
+            logger.success(f"成功查询source_document='{source_document}'的{action_desc}，共{len(results)}条记录")
+            return results
+            
+        except Error as e:
+            logger.error(f"根据源文档和索引查询文本块失败: {str(e)}")
+            raise
+        finally:
+            self.disconnect()
     
     def get_statistics(self) -> Dict:
         """

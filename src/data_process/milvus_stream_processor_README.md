@@ -39,7 +39,7 @@ docker run -d --name milvus-standalone \
 ### 2. 基本使用
 
 ```python
-from data_process.milvus_stream_processor import stream_process_psychology_data_milvus
+from src.data_process.milvus_stream_processor import stream_process_psychology_data_milvus
 
 # 快速处理数据
 result = stream_process_psychology_data_milvus(
@@ -53,7 +53,7 @@ print(f"处理完成: {result['stored_chunks']} 条记录存储到Milvus")
 ### 3. 高级使用
 
 ```python
-from data_process.milvus_stream_processor import MilvusStreamProcessor
+from src.data_process.milvus_stream_processor import MilvusStreamProcessor
 
 # 创建处理器实例
 processor = MilvusStreamProcessor(
@@ -208,7 +208,7 @@ jupyter notebook examples/milvus_stream_processor_example.ipynb
 
 - [Milvus官方文档](https://milvus.io/docs)
 - [M3E Embedding模型](https://huggingface.co/moka-ai/m3e-base)
-- [FAISS vs Milvus对比分析](../docs/faiss_mysql_integration_guide.md)
+- [FAISS vs Milvus对比分析](../../docs/faiss_mysql_integration_guide.md)
 
 ## 🤝 贡献指南
 
