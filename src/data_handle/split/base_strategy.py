@@ -27,7 +27,7 @@ class BaseTextSplitterStrategy(ABC):
     提供基础的文本分割功能和配置管理。
     
     Attributes:
-        text_splitter (RecursiveCharacterTextSplitter): LangChain文本分割器实例
+        text_splitter (Any): 文本分割器实例（必须具有split_text方法）
         min_length (int): 最小文本长度阈值
         strategy_name (str): 策略名称，用于日志和调试
         
@@ -38,20 +38,21 @@ class BaseTextSplitterStrategy(ABC):
         >>> texts, metadata = strategy.split_texts(["长文本内容"], [{"source": "test"}])
     """
 
-    def __init__(self, text_splitter: RecursiveCharacterTextSplitter, min_length: int, is_validate: bool = False):
+    def __init__(self, text_splitter: Any, min_length: int, is_validate: bool = False):
         """
         初始化文本分割策略
         
         Args:
-            text_splitter: LangChain文本分割器实例
+            text_splitter: 文本分割器实例（必须具有split_text方法）
             min_length: 最小文本长度阈值
             
         Raises:
-            TypeError: 当text_splitter不是RecursiveCharacterTextSplitter实例时
+            TypeError: 当text_splitter不具有split_text方法时
             ValueError: 当min_length小于0时
         """
-        if not isinstance(text_splitter, RecursiveCharacterTextSplitter):
-            raise TypeError("text_splitter必须是RecursiveCharacterTextSplitter实例")
+        # 检查text_splitter是否具有split_text方法（支持自定义分割器类）
+        if not hasattr(text_splitter, 'split_text') or not callable(getattr(text_splitter, 'split_text')):
+            raise TypeError("text_splitter必须具有split_text方法")
         
         if min_length < 0:
             raise ValueError("min_length不能为负数")

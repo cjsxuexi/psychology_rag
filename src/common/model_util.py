@@ -1,5 +1,16 @@
 import os
 
+"""
+模型工具模块
+
+该解释提供了关于模型加载策略的重要背景信息，具体如下：
+
+对于需要极致性能的生产环境，推荐采用vLLM/TGI；
+注意到Ollama虽处理速度较快，但为保证通用性而牺牲了最大批处理吞吐量；
+强调针对大规模推理场景，必须采用专业的推理框架；
+对比本地直接加载与裸机环境部署，前者虽工作量较大，但可实现完全控制。
+"""
+
 from huggingface_hub import snapshot_download
 
 from src.common.file_utils import get_project_base_directory

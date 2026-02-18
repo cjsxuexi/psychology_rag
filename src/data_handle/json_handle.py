@@ -4,35 +4,28 @@ import os
 
 import ijson
 import pandas as pd
-from dotenv import load_dotenv
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from loguru import logger
 from tqdm import tqdm
 
 from src import common as fu
+from src.data_handle.parser import SplitterFactory
 from src.data_handle.split import TextSplitterStrategyFactory
-
-load_dotenv(dotenv_path=fu.get_config_path('.env'))
 
 
 # ===================== 核心JSON处理类 =====================
 class JsonHandle:
     """
     处理json数据，并返回处理后的文本块列表
-    支持通过配置切换拆分策略
+    支持通过配置切换拆分策略和分割器类型
     """
 
     def __init__(self, json_name="PsyDTCorpus_train_mulit_turn_packing.json"):
         self.json_name = json_name
         self.min_length = int(os.getenv("MIN_TEXT_LENGTH", 50))
 
-        # 初始化文本分割器
-        self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=int(os.getenv("TEXT_CHUNK_SIZE", 1000)),
-            chunk_overlap=int(os.getenv("TEXT_CHUNK_OVERLAP", 100)),
-            length_function=len,
-            separators=["\n\n", "\n", "。", "，", " "]  # 优先按语义分割
-        )
+        # 初始化文本分割器（使用工厂创建，支持配置切换）
+        splitter_factory = SplitterFactory()
+        self.text_splitter = splitter_factory.create_splitter()
 
         # 创建策略实例
         factory = TextSplitterStrategyFactory()
@@ -145,6 +138,7 @@ def load_large_json_data(json_name="PsyDTCorpus_train_mulit_turn_packing.json", 
     if not os.path.exists(json_path):
         raise FileNotFoundError(f"未找到数据文件：{json_path}，请确认路径正确")
 
+    # 使用ijson进行流式读取
     with open(json_path, "r", encoding="utf-8") as f:
         # 逐行读取JSON数组中的每个item
         for item in ijson.items(f, "item"):
