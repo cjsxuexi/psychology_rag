@@ -93,7 +93,6 @@ class BaseStreamProcessor(ABC):
         self.checkpoint_file = None
         self.last_checkpoint = {}
         
-    @abstractmethod
     def _process_item(self, item: Any) -> Optional[Any]:
         """
         抽象方法：处理单个数据项
@@ -107,7 +106,6 @@ class BaseStreamProcessor(ABC):
         """
         pass
     
-    @abstractmethod
     def _data_reader(self, max_items: Optional[int] = None) -> Generator[Any, None, None]:
         """
         抽象方法：数据读取器

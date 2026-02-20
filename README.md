@@ -26,6 +26,55 @@
   - `file_utils.py`: 文件路径管理和配置读取工具
   - `model_util.py`: 模型加载和管理工具，支持模型缓存避免重复加载
 
+### 4. 数据处理层
+- **[data_handle/](src/data_handle/)**: 数据处理辅助模块
+  - `json_handle.py`: JSON数据处理工具，支持数据加载、处理和术语提取
+    - **核心功能**:
+      - `load_json_data()`: 加载小型JSON文件，一次性读取处理
+      - `load_large_json_data()`: 流式加载大型JSON文件，避免内存溢出
+      - `_process_json_item()`: 处理单个JSON数据项，实现数据清洗和格式化
+      - `_extract_terms()`: 术语识别和提取，支持从标签和内容中提取关键词
+      - `get_all_terms()`: 获取所有识别的术语
+      - `clear_terms()`: 清空术语存储
+    - **术语提取逻辑**:
+      - 从标签中提取术语
+      - 从内容中使用jieba分词和词频统计提取关键词
+      - 随机从高频词中选择3个作为最终术语
+      - 全局存储术语，支持去重和批量获取
+  
+  - **[parser/](src/data_handle/parser/)**: 文本分割器实现
+    - **分割器类型**:
+      - `RecursiveSplitter`: 递归字符分割器，基于langchain实现
+      - `CharacterSplitter`: 字符分割器，基于langchain实现
+      - `TokenSplitter`: 令牌分割器，基于langchain实现
+      - `LlamaSentenceSplitter`: 基于LlamaIndex的句子分割器
+      - `LlamaSentenceWindowSplitter`: 基于LlamaIndex的句子窗口分割器，为每个句子添加上下文
+      - `LlamaSemanticSplitter`: 基于LlamaIndex的语义分割器，使用embedding模型进行语义分割
+      - `LlamaCombinedSplitter`: 组合分割器，先使用语义分割，再对过大的块进行句子分割
+    - **SplitterFactory**: 分割器工厂类，根据配置创建不同类型的分割器实例
+      - 支持从环境变量或参数获取配置
+      - 提供统一的分割器创建接口
+  
+  - **[split/](src/data_handle/split/)**: 文本分割策略实现
+    - **设计模式**:
+      - 工厂模式：封装策略创建过程
+      - 策略模式：支持运行时策略切换
+      - 单例模式：工厂类设计
+    - **策略实现**:
+      - `BaseTextSplitterStrategy`: 基础分割策略类
+      - `BatchTextSplitterStrategy`: 批量处理策略
+      - `ParallelBatchTextSplitterStrategy`: 并行批量处理策略，提高处理效率
+    - **TextSplitterStrategyFactory**: 策略工厂类
+      - 动态创建策略实例
+      - 策略注册和管理
+      - 配置验证和默认值处理
+      - 策略信息查询
+    - **核心功能**:
+      - 支持不同分割策略的切换
+      - 批量处理文本分割
+      - 并行处理提高效率
+      - 配置驱动的策略选择
+
 ## 🚀 快速开始
 
 ### 1. 系统启动

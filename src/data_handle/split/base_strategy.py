@@ -69,14 +69,14 @@ class BaseTextSplitterStrategy(ABC):
     def split_texts(self, 
                    texts: List[str], 
                    metadata_list: Optional[List[dict]] = None, 
-                   batch_size: int = 10_000) -> Tuple[List[str], List[dict]]:
+                   batch_size: int = 500) -> Tuple[List[str], List[dict]]:
         """
         模板方法：统一的文本分割入口
         
         Args:
             texts: 待分割的文本列表
             metadata_list: 对应的元信息列表，可选
-            batch_size: 批处理大小，默认10000
+            batch_size: 批处理大小，默认500
             
         Returns:
             Tuple[List[str], List[dict]]: (分割后的文本列表, 对应的元信息列表)
@@ -99,14 +99,14 @@ class BaseTextSplitterStrategy(ABC):
     def _split_texts(self, 
                     texts: List[str], 
                     metadata_list: Optional[List[dict]] = None, 
-                    batch_size: int = 10_000) -> Tuple[List[str], List[dict]]:
+                    batch_size: int = 500) -> Tuple[List[str], List[dict]]:
         """
         抽象方法：具体的文本分割实现（需子类实现）
         
         Args:
             texts: 已过滤的文本列表
             metadata_list: 对应的元信息列表，可选
-            batch_size: 批处理大小，默认10000
+            batch_size: 批处理大小，默认500
             
         Returns:
             Tuple[List[str], List[dict]]: (分割后的文本列表, 对应的元信息列表)

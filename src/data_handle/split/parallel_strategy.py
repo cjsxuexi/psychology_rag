@@ -20,12 +20,13 @@
 注意：由于使用多进程，需要注意pickle序列化的限制
 """
 
-import os
-from typing import List, Optional, Tuple
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from multiprocessing import Pool, cpu_count
-from tqdm import tqdm
 import logging
+import os
+from multiprocessing import Pool, cpu_count
+from typing import List, Optional, Tuple
+
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from tqdm import tqdm
 
 from .base_strategy import BaseTextSplitterStrategy
 
@@ -51,8 +52,8 @@ class ParallelBatchTextSplitterStrategy(BaseTextSplitterStrategy):
         >>> texts, metadata = strategy.split_texts(["大量文本数据"], batch_size=5000)
     """
 
-    def __init__(self, 
-                 text_splitter: RecursiveCharacterTextSplitter, 
+    def __init__(self,
+                 text_splitter: RecursiveCharacterTextSplitter,
                  min_length: int,
                  max_processes: Optional[int] = None,
                  chunk_timeout: int = 300):
@@ -70,25 +71,35 @@ class ParallelBatchTextSplitterStrategy(BaseTextSplitterStrategy):
             ValueError: 参数值错误
         """
         super().__init__(text_splitter, min_length)
-        
+
         # 设置进程数
-        self.max_processes = max_processes or min(cpu_count(), 8)  # 限制最大8个进程
+        if max_processes is not None:
+            self.max_processes = max_processes
+        else:
+            # 从环境变量获取配置
+            cpu_percentage = int(os.getenv("PARALLEL_CPU_PERCENTAGE", 75))
+
+            # 计算基于CPU百分比的进程数
+            cpu_count_val = cpu_count()
+            # 确保至少有1个进程，并且百分比值合理
+            cpu_percentage = max(1, min(100, cpu_percentage))
+            self.max_processes = max(1, int(cpu_count_val * cpu_percentage / 100))
         self.chunk_timeout = chunk_timeout
-        
+
         logger.info(f"并行分割策略初始化完成: {self.strategy_name}")
         logger.info(f"配置参数 - 进程数: {self.max_processes}, 超时: {chunk_timeout}秒")
 
     def _split_texts(self, 
                     texts: List[str], 
                     metadata_list: Optional[List[dict]] = None, 
-                    batch_size: int = 10_000) -> Tuple[List[str], List[dict]]:
+                    batch_size: int = 500) -> Tuple[List[str], List[dict]]:
         """
         并行批量分割文本列表的具体实现
         
         Args:
             texts: 已过滤的文本列表
             metadata_list: 对应的元信息列表，可选
-            batch_size: 批处理大小，默认10000
+            batch_size: 批处理大小，默认500
             
         Returns:
             Tuple[List[str], List[dict]]: (分割后的文本列表, 对应的元信息列表)
@@ -101,54 +112,53 @@ class ParallelBatchTextSplitterStrategy(BaseTextSplitterStrategy):
         # 初始化结果容器
         split_texts: List[str] = []
         split_metadata: List[dict] = []
-        
+
         # 计算批次信息
         total_items = len(texts)
         total_batches = (total_items + batch_size - 1) // batch_size
         logger.info(f"开始并行分割: {total_items}条文本，{total_batches}个批次，{self.max_processes}个进程")
-        
+
         try:
             # 创建进程池
             with Pool(processes=self.max_processes) as pool:
                 logger.debug(f"进程池创建成功，进程数: {self.max_processes}")
-                
+
                 # 分批处理
                 for batch_idx in tqdm(range(0, total_items, batch_size),
-                                    desc=f"{self.strategy_name} 并行分割进度",
-                                    unit="batch"):
-                    
+                                      desc=f"{self.strategy_name} 并行分割进度",
+                                      unit="batch"):
                     # 获取当前批次数据
                     batch_end = min(batch_idx + batch_size, total_items)
                     batch_texts = texts[batch_idx:batch_end]
-                    batch_metadata = (metadata_list[batch_idx:batch_end] 
-                                    if metadata_list else [None] * len(batch_texts))
-                    
+                    batch_metadata = (metadata_list[batch_idx:batch_end]
+                                      if metadata_list else [None] * len(batch_texts))
+
                     # 并行处理当前批次
                     batch_results = self._process_batch_parallel(pool, batch_texts, batch_metadata, batch_idx)
                     batch_split_texts, batch_split_metadata = batch_results
-                    
+
                     # 合并结果
                     split_texts.extend(batch_split_texts)
                     split_metadata.extend(batch_split_metadata)
-                    
-                    logger.debug(f"批次 {batch_idx//batch_size + 1}/{total_batches} "
-                               f"处理完成: 生成{len(batch_split_texts)}个文本块")
-            
+
+                    logger.debug(f"批次 {batch_idx // batch_size + 1}/{total_batches} "
+                                 f"处理完成: 生成{len(batch_split_texts)}个文本块")
+
             # 验证结果一致性
             self._validate_results_consistency(split_texts, split_metadata)
-            
+
             logger.info(f"并行分割完成: 输出{len(split_texts)}个文本块")
             return split_texts, split_metadata
-            
+
         except Exception as e:
             logger.error(f"并行分割过程中发生错误: {str(e)}")
             raise
 
-    def _process_batch_parallel(self, 
-                               pool: Pool,
-                               batch_texts: List[str], 
-                               batch_metadata: List[Optional[dict]],
-                               batch_start_idx: int) -> Tuple[List[str], List[dict]]:
+    def _process_batch_parallel(self,
+                                pool: Pool,
+                                batch_texts: List[str],
+                                batch_metadata: List[Optional[dict]],
+                                batch_start_idx: int) -> Tuple[List[str], List[dict]]:
         """
         并行处理单个批次的文本
         
@@ -164,28 +174,28 @@ class ParallelBatchTextSplitterStrategy(BaseTextSplitterStrategy):
         batch_split_texts: List[str] = []
         batch_split_metadata: List[dict] = []
         total_chunks = 0
-        
+
         try:
-            # 准备并行任务参数
+            # 准备并行任务参数，只传递文本
             parallel_args = [(text,) for text in batch_texts]
-            
+
             # 并行执行文本分割
             results = pool.starmap(
                 self._parallel_split_worker,
                 parallel_args,
                 chunksize=max(1, len(batch_texts) // self.max_processes)
             )
-            
+
             # 处理并行结果
             for item_idx, (chunks, original_text) in enumerate(zip(results, batch_texts)):
                 original_item_idx = batch_start_idx + item_idx
                 meta = batch_metadata[item_idx] if batch_metadata else None
-                
+
                 # 为每个chunk分配元信息
                 for chunk_idx, chunk_text in enumerate(chunks):
                     batch_split_texts.append(chunk_text)
                     total_chunks += 1
-                    
+
                     if meta:
                         # 复制元信息并添加chunk级别的详细信息
                         chunk_meta = meta.copy()
@@ -210,13 +220,13 @@ class ParallelBatchTextSplitterStrategy(BaseTextSplitterStrategy):
                             'chunk_length': len(chunk_text),
                             'processing_strategy': self.strategy_name
                         })
-            
+
             logger.debug(f"并行批次处理完成: 处理{len(batch_texts)}个原始项，生成{total_chunks}个文本块")
-            
+
         except Exception as e:
             logger.error(f"并行批次处理失败: {str(e)}")
             raise
-            
+
         return batch_split_texts, batch_split_metadata
 
     @staticmethod
@@ -232,26 +242,26 @@ class ParallelBatchTextSplitterStrategy(BaseTextSplitterStrategy):
         Returns:
             List[str]: 分割后的文本块列表
         """
-        # 在子进程中重新创建分割器（因为不能pickle）
-        # 这里使用简单的字符分割作为示例
-        # 实际应用中可能需要更复杂的处理
+        from src.data_handle.parser import create_splitter
+        from src.config.config_loader import parse_config_and_set_env
+
         if not text or not text.strip():
             return []
-        
-        # 简单的分割逻辑（实际应该使用配置好的分割器）
-        # 这里仅为演示目的
-        max_chunk_size = 1000
-        chunks = []
-        for i in range(0, len(text), max_chunk_size):
-            chunk = text[i:i + max_chunk_size].strip()
-            if chunk:
-                chunks.append(chunk)
-        
+
+        # 在子进程中解析配置并设置环境变量
+        parse_config_and_set_env()
+
+        # 在子进程中使用create_splitter创建分割器（不传参数，从环境变量获取配置）
+        splitter = create_splitter()
+
+        # 使用分割器进行文本分割
+        chunks = splitter.split_text(text)
+
         return chunks
 
-    def _validate_results_consistency(self, 
-                                    split_texts: List[str], 
-                                    split_metadata: List[dict]) -> None:
+    def _validate_results_consistency(self,
+                                      split_texts: List[str],
+                                      split_metadata: List[dict]) -> None:
         """
         验证处理结果的一致性
         
@@ -266,7 +276,7 @@ class ParallelBatchTextSplitterStrategy(BaseTextSplitterStrategy):
             raise RuntimeError(
                 f"结果不一致: 文本块数量({len(split_texts)}) ≠ 元信息数量({len(split_metadata)})"
             )
-        
+
         # 验证元信息结构
         for i, meta in enumerate(split_metadata):
             required_fields = ['original_item_index', 'chunk_index_in_item']

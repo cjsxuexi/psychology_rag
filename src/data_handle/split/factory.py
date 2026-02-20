@@ -58,11 +58,11 @@ class TextSplitterStrategyFactory:
         logger.info("文本分割策略工厂初始化完成")
         logger.debug(f"已注册策略: {list(self._registry.keys())}")
 
-    def create_strategy(self, 
-                       text_splitter: Any,
-                       min_length: int,
+    def create_strategy(self,
+                        text_splitter: Any,
+                        min_length: int,
                         strategy_type: str | None = None,
-                       **kwargs) -> BaseTextSplitterStrategy:
+                        **kwargs) -> BaseTextSplitterStrategy:
         """
         创建指定类型的文本分割策略实例
         
@@ -94,36 +94,36 @@ class TextSplitterStrategyFactory:
                 f"不支持的拆分策略: '{strategy_type}'，"
                 f"可选值：{available_strategies}"
             )
-        
+
         # 验证基本参数
         # 检查text_splitter是否具有split_text方法（支持自定义分割器类）
         if not hasattr(text_splitter, 'split_text') or not callable(getattr(text_splitter, 'split_text')):
             raise TypeError("text_splitter必须具有split_text方法")
-        
+
         if not isinstance(min_length, int) or min_length < 0:
             raise ValueError("min_length必须是非负整数")
-        
+
         try:
             # 获取策略类
             strategy_class = self._registry[strategy_type]
-            
+
             # 创建策略实例
             strategy_instance = strategy_class(
                 text_splitter=text_splitter,
                 min_length=min_length,
                 **kwargs
             )
-            
+
             logger.info(f"成功创建策略实例: {strategy_type} -> {strategy_instance}")
             return strategy_instance
-            
+
         except Exception as e:
             logger.error(f"创建策略实例失败: {strategy_type}, 错误: {str(e)}")
             raise
 
-    def register_strategy(self, 
-                         strategy_type: str, 
-                         strategy_class: Type[BaseTextSplitterStrategy]) -> None:
+    def register_strategy(self,
+                          strategy_type: str,
+                          strategy_class: Type[BaseTextSplitterStrategy]) -> None:
         """
         注册新的策略类型
         
@@ -137,13 +137,13 @@ class TextSplitterStrategyFactory:
         """
         if not isinstance(strategy_type, str):
             raise TypeError("strategy_type必须是字符串")
-            
+
         if not issubclass(strategy_class, BaseTextSplitterStrategy):
             raise ValueError("strategy_class必须继承自BaseTextSplitterStrategy")
-        
+
         if strategy_type in self._registry:
             raise ValueError(f"策略类型 '{strategy_type}' 已存在")
-        
+
         self._registry[strategy_type] = strategy_class
         logger.info(f"成功注册新策略: {strategy_type} -> {strategy_class.__name__}")
 
@@ -163,12 +163,12 @@ class TextSplitterStrategyFactory:
         if strategy_type not in self._registry:
             logger.warning(f"策略类型 '{strategy_type}' 不存在")
             return False
-        
+
         # 防止注销内置策略
         if strategy_type in STRATEGY_REGISTRY:
             logger.warning(f"不允许注销内置策略: {strategy_type}")
             return False
-        
+
         removed_class = self._registry.pop(strategy_type)
         logger.info(f"成功注销策略: {strategy_type} -> {removed_class.__name__}")
         return True
@@ -201,7 +201,7 @@ class TextSplitterStrategyFactory:
         """
         if strategy_type not in self._registry:
             return None
-            
+
         strategy_class = self._registry[strategy_type]
         return {
             'type': strategy_type,
@@ -211,9 +211,9 @@ class TextSplitterStrategyFactory:
             'is_builtin': strategy_type in STRATEGY_REGISTRY
         }
 
-    def validate_strategy_config(self, 
-                               strategy_type: str,
-                               config: Dict[str, Any]) -> bool:
+    def validate_strategy_config(self,
+                                 strategy_type: str,
+                                 config: Dict[str, Any]) -> bool:
         """
         验证策略配置的有效性
         
@@ -226,58 +226,15 @@ class TextSplitterStrategyFactory:
         """
         if strategy_type not in self._registry:
             return False
-            
+
         # 基本必需参数检查
         required_params = ['text_splitter', 'min_length']
         for param in required_params:
             if param not in config:
                 logger.error(f"配置缺少必需参数: {param}")
                 return False
-                
+
         return True
-
-    @classmethod
-    def get_default_strategy(cls) -> str:
-        """
-        获取默认策略类型
-        
-        Returns:
-            str: 默认策略类型
-        """
-        return 'batch'
-
-    @classmethod
-    def create_with_defaults(cls,
-                           strategy_type: Optional[str] = None,
-                           **kwargs) -> BaseTextSplitterStrategy:
-        """
-        使用默认配置创建策略实例（便捷方法）
-        
-        Args:
-            strategy_type: 策略类型，None表示使用默认策略
-            **kwargs: 其他参数
-            
-        Returns:
-            BaseTextSplitterStrategy: 策略实例
-        """
-        factory = cls()
-        strategy_type = strategy_type or cls.get_default_strategy()
-        
-        # 创建默认的文本分割器
-        default_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=kwargs.get('chunk_size', 1000),
-            chunk_overlap=kwargs.get('chunk_overlap', 100),
-            length_function=len,
-            separators=["\n\n", "\n", "。", "，", " "]
-        )
-        
-        return factory.create_strategy(
-            strategy_type=strategy_type,
-            text_splitter=default_splitter,
-            min_length=kwargs.get('min_length', 50),
-            **{k: v for k, v in kwargs.items() 
-               if k not in ['chunk_size', 'chunk_overlap', 'min_length']}
-        )
 
     def __repr__(self) -> str:
         """返回工厂的字符串表示"""
@@ -285,10 +242,10 @@ class TextSplitterStrategyFactory:
 
 
 # 便捷函数
-def create_text_splitter_strategy(strategy_type: str,
-                                text_splitter: Any,
-                                min_length: int,
-                                **kwargs) -> BaseTextSplitterStrategy:
+def create_text_splitter_strategy(text_splitter: Any,
+                                  min_length: int,
+                                  strategy_type: str | None = None,
+                                  **kwargs) -> BaseTextSplitterStrategy:
     """
     便捷函数：创建文本分割策略实例
     
@@ -302,7 +259,7 @@ def create_text_splitter_strategy(strategy_type: str,
         BaseTextSplitterStrategy: 策略实例
     """
     factory = TextSplitterStrategyFactory()
-    return factory.create_strategy(strategy_type, text_splitter, min_length, **kwargs)
+    return factory.create_strategy(strategy_type, min_length, text_splitter, **kwargs)
 
 
 def get_available_strategies() -> Dict[str, str]:

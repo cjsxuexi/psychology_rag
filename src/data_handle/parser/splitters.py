@@ -112,7 +112,7 @@ class LlamaSentenceSplitter(BaseSplitter):
 class LlamaSentenceWindowSplitter(BaseSplitter):
     """LlamaIndex句子窗口分割器"""
 
-    def __init__(self, window_size: int = 3):
+    def __init__(self, window_size: int = 1):
         self.splitter = SentenceWindowNodeParser(
             window_size=window_size
         )
@@ -191,7 +191,7 @@ class LlamaCombinedSplitter(BaseSplitter):
         model_path = load_model("infgrad/stella-large-zh-v2")
         embed_model = HuggingFaceEmbedding(
             model_name=model_path,
-            embed_batch_size=10
+            embed_batch_size=4
         )
 
         # 初始化语义分割器作为主要分割器

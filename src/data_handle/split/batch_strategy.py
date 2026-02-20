@@ -62,14 +62,14 @@ class BatchTextSplitterStrategy(BaseTextSplitterStrategy):
     def _split_texts(self, 
                     texts: List[str], 
                     metadata_list: Optional[List[dict]] = None, 
-                    batch_size: int = 10_000) -> Tuple[List[str], List[dict]]:
+                    batch_size: int = 500) -> Tuple[List[str], List[dict]]:
         """
         批量分割文本列表的具体实现
         
         Args:
             texts: 已过滤的文本列表
             metadata_list: 对应的元信息列表，可选
-            batch_size: 批处理大小，默认10000
+            batch_size: 批处理大小，默认500
             
         Returns:
             Tuple[List[str], List[dict]]: (分割后的文本列表, 对应的元信息列表)

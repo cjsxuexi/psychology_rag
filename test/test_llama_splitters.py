@@ -9,7 +9,7 @@ import os
 # 添加项目根目录到Python路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.data_handle.parser.splitter_factory import SplitterFactory
+from src.data_handle.parser.splitter_factory import create_splitter
 from src.data_handle.split.factory import TextSplitterStrategyFactory
 
 test_text = """
@@ -62,7 +62,7 @@ def test_llama_splitters():
         
         try:
             # 创建分割器
-            splitter = SplitterFactory.create_splitter(
+            splitter = create_splitter(
                 splitter_type=splitter_type,
                 chunk_size=200,
                 chunk_overlap=50
@@ -95,7 +95,7 @@ def test_llama_semantic_splitter():
     # 测试文本（包含多个语义相关的段落）
     try:
         # 创建语义分割器
-        splitter = SplitterFactory.create_splitter(
+        splitter = create_splitter(
             splitter_type="llama_semantic",
             chunk_size=100,
             chunk_overlap=10
@@ -132,7 +132,7 @@ def test_llama_combined_splitter():
     
     try:
         # 创建组合分割器
-        splitter = SplitterFactory.create_splitter(
+        splitter = create_splitter(
             splitter_type="llama_combined",
             chunk_size=200,
             chunk_overlap=30

@@ -50,9 +50,9 @@ def test_stream_processing():
     try:
         # 处理少量数据进行测试
         result = stream_process_psychology_data_milvus(
-            max_items=50,  # 处理50条数据
-            batch_size=10,
-            embedding_batch_size=5,
+            max_items=10,  # 处理50条数据
+            batch_size=4,
+            embedding_batch_size=4,
             memory_limit_mb=1000,
             auto_configure=False
         )
@@ -110,90 +110,6 @@ def test_search_functionality():
         if processor:
             processor.close()
 
-
-def test_data_reader_method():
-    """测试_data_reader方法，按照新要求调整输出逻辑"""
-    logger.info("=== 测试_data_reader方法（调整后）===")
-    
-    processor = None
-    try:
-        # 创建处理器实例
-        processor = MilvusStreamProcessor(
-            json_file="PsyDTCorpus_train_mulit_turn_packing.json",
-            batch_size=10,
-            max_workers=1,
-            memory_limit_mb=1000
-        )
-        
-        logger.success("✓ Milvus流处理器初始化成功")
-        
-        # 调用_data_reader方法并获取前5个数据项
-        logger.info("开始读取JSON数据...")
-        reader_generator = processor._data_reader(max_items=5)
-        
-        item_count = 0
-        for item in reader_generator:
-            item_count += 1
-            logger.info(f"\n--- 第 {item_count} 个完整item对象 ---")
-            logger.info(f"对象类型: {type(item)}")
-            logger.info(f"对象键数量: {len(item) if isinstance(item, dict) else 'N/A'}")
-            
-            # 输出前3个键值对，根据不同类型采用不同输出策略
-            if isinstance(item, dict) and len(item) > 0:
-                logger.info("前3个字段内容:")
-                keys_list = list(item.keys())
-                for i, key in enumerate(keys_list[:3]):
-                    value = item[key]
-                    value_type = type(value).__name__
-                    
-                    if isinstance(value, list):
-                        # 列表类型：打印前2条内容，最大200字
-                        if len(value) > 0:
-                            logger.info(f"  {key} (list[{len(value)}]):")
-                            for j, list_item in enumerate(value[:2]):  # 前2条
-                                if isinstance(list_item, dict):
-                                    # 如果列表项是字典，显示其键名和部分内容
-                                    item_keys = list(list_item.keys())
-                                    item_preview = f"{{{', '.join(item_keys[:3])}}}" if len(item_keys) > 3 else str(list_item)
-                                    logger.info(f"    [{j}]: {item_preview[:100]}...")
-                                else:
-                                    # 普通类型，直接转字符串并限制长度
-                                    item_str = str(list_item)
-                                    item_preview = item_str[:100] + "..." if len(item_str) > 100 else item_str
-                                    logger.info(f"    [{j}]: {item_preview}")
-                            if len(value) > 2:
-                                logger.info(f"    ... 还有 {len(value) - 2} 条")
-                        else:
-                            logger.info(f"  {key} (empty list): []")
-                    
-                    elif isinstance(value, (str, int, float, bool)) or value is None:
-                        # 普通类型：直接输出打印
-                        value_str = str(value)
-                        if len(value_str) > 200:
-                            value_str = value_str[:200] + "..."
-                        logger.info(f"  {key} ({value_type}): {value_str}")
-                    
-                    else:
-                        # 其他复杂类型：显示类型和简要信息
-                        value_str = str(value)
-                        value_preview = value_str[:100] + "..." if len(value_str) > 100 else value_str
-                        logger.info(f"  {key} ({value_type}): {value_preview}")
-                
-                if len(keys_list) > 3:
-                    logger.info(f"  ... 还有 {len(keys_list) - 3} 个字段")
-            
-            logger.info("-" * 50)
-        
-        # 验证结果
-        assert item_count == 5, f"应该读取5个数据项，实际读取了{item_count}个"
-        logger.success(f"✓ 成功读取并展示了 {item_count} 个完整item对象")
-        
-    except Exception as e:
-        logger.error(f"_data_reader方法测试失败: {str(e)}")
-        raise
-    finally:
-        if processor:
-            processor.close()
 
 
 def test_error_handling():
@@ -272,10 +188,10 @@ def main():
         # test_basic_functionality()
         
         # 3. 流式处理测试
-        # test_stream_processing()
+        test_stream_processing()
         
         # 4. 搜索功能测试
-        test_search_functionality()
+        # test_search_functionality()
         #
         # # 5. 错误处理测试
         # test_error_handling()

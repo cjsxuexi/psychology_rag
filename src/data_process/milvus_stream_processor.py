@@ -171,158 +171,6 @@ class MilvusStreamProcessor(BaseStreamProcessor):
             logger.error(f"创建Milvus集合失败: {str(e)}")
             raise
 
-    def _data_reader(self, max_items: Optional[int] = None) -> Generator[Dict, None, None]:
-        """
-        流式读取JSON数据（支持断点续传）
-        调整为每次读取一个完整的item对象，不校验内部属性
-        
-        Args:
-            max_items: 最大读取条目数
-            
-        Yields:
-            Dict: 完整的JSON item对象
-        """
-        json_path = get_resource_path(self.json_file)
-        item_count = 0
-
-        logger.info(f"开始流式读取JSON文件: {json_path}")
-
-        try:
-            with open(json_path, "r", encoding="utf-8") as f:
-                # 使用ijson.items直接读取数组中的每个完整对象
-                items = ijson.items(f, "item")
-
-                for item in items:
-                    # 控制最大读取数量
-                    if max_items and item_count >= max_items:
-                        logger.info(f"达到最大读取数量限制: {max_items}")
-                        break
-
-                    # 记录读取进度
-                    item_count += 1
-                    if item_count % 1000 == 0:  # 每1000条报告一次进度
-                        logger.info(f"已读取 {item_count} 个完整item对象")
-
-                    # 直接yield完整的item对象，不进行任何校验
-                    yield item
-
-        except FileNotFoundError:
-            logger.error(f"JSON文件不存在: {json_path}")
-            raise
-        except ijson.JSONError as e:
-            logger.error(f"JSON格式错误: {e}")
-            raise
-        except Exception as e:
-            logger.error(f"JSON读取失败: {e}")
-            raise
-
-    def _process_item(self, item: Dict) -> Optional[Tuple[str, Dict]]:
-        """
-        处理单个JSON数据项（RAG专用逻辑）
-        调整为适配新的数据结构：item包含id、normalizedTag、messages三个属性
-        
-        Args:
-            item: JSON数据项，包含{id, normalizedTag, messages}
-            
-        Returns:
-            Tuple[str, Dict]: (处理后的文本, 元数据) 或 None
-        """
-        try:
-            # 提取核心字段（适配新的数据结构）
-            item_id = item.get("id", 0)
-            tag = item.get("normalizedTag", "无标签")
-            messages = item.get("messages", [])
-
-            # 验证messages字段
-            if not isinstance(messages, list) or len(messages) == 0:
-                logger.debug(f"跳过无效messages数据项 ID: {item_id}")
-                return None
-
-            # 计算content数量，content数量/2作为total_turns
-            content_count = sum(1 for msg in messages if msg.get("content", "").strip())
-            total_turns = content_count // 2
-
-            # 解析messages中的role和content，构造对话格式
-            dialogue_parts = []
-            role_mapping = {
-                "user": "来访者",
-                "assistant": "咨询师"
-            }
-
-            for msg in messages:
-                role = msg.get("role", "")
-                content = msg.get("content", "").strip()
-
-                # 跳过system角色的消息，不纳入content拼接
-                if role == "system":
-                    continue
-
-                if content:  # 只处理有内容的消息
-                    role_cn = role_mapping.get(role, role)
-                    dialogue_parts.append(f"{role_cn}：{content}")
-
-            # 拼接全部content内容，不同角色会话用\n分隔
-            dialogue_str = "\n".join(dialogue_parts) + "\n"
-
-            # 调整metadata，存储id、tag、total_turns三个值
-            metadata = {
-                'id': item_id,
-                'tag': tag,
-                'total_turns': total_turns
-            }
-
-            logger.debug(f"已处理数据项 ID: {item_id}, 标签: {tag}, 对话轮数: {total_turns}")
-            return dialogue_str, metadata
-
-        except Exception as e:
-            logger.error(f"处理JSON项失败: {e}")
-            # 注意：这里不再直接修改stats，让BaseStreamProcessor统一处理
-            return None
-
-    def _text_splitter_worker(self):
-        """文本拆分工作线程"""
-        try:
-            while not self.stop_event.is_set():
-                try:
-                    # 从队列获取批量数据
-                    batch_data = []
-                    for _ in range(min(self.batch_size, self.raw_queue.qsize())):
-                        try:
-                            item = self.raw_queue.get(timeout=1)
-                            batch_data.append(item)
-                            self.raw_queue.task_done()
-                        except Empty:
-                            break
-
-                    if not batch_data:
-                        if self.pipeline_finished.get('reader', False):
-                            break
-                        continue
-
-                    # 批量处理文本拆分
-                    texts = [item[0] for item in batch_data]
-                    metadatas = [item[1] for item in batch_data]
-
-                    split_texts, split_metadatas = self.json_handle.batch_split_texts(
-                        texts,
-                        batch_size=self.batch_size,
-                        metadata_list=metadatas
-                    )
-
-                    # 将拆分结果放入队列
-                    for text, meta in zip(split_texts, split_metadatas):
-                        self.chunk_queue.put((text, meta))
-
-                    self.stats['generated_chunks'] += len(split_texts)
-
-                except Exception as e:
-                    logger.error(f"文本拆分工作线程异常: {e}")
-                    self.pipeline_error = e
-                    break
-
-        except Exception as e:
-            logger.error(f"文本拆分线程崩溃: {e}")
-            self.pipeline_error = e
 
     def _embedding_worker(self):
         """向量化工作线程"""
@@ -442,7 +290,7 @@ class MilvusStreamProcessor(BaseStreamProcessor):
     def process_stream(self, max_items: Optional[int] = None):
         """
         执行流式处理流程（RAG专用）
-        重写父类方法以适应Milvus的四阶段处理流程
+        使用parallel_handle_json_data实现数据的流式加载、解析生成元数据和拆分
         
         Args:
             max_items: 最大处理条目数
@@ -473,52 +321,59 @@ class MilvusStreamProcessor(BaseStreamProcessor):
             monitor_thread.start()
 
             # 启动处理线程池
-            with ThreadPoolExecutor(max_workers=self.max_workers + 3) as executor:  # +3用于多个处理阶段
-                # 提交各阶段工作线程
+            with ThreadPoolExecutor(max_workers=self.max_workers + 2) as executor:  # +2用于向量化和存储
+                # 提交向量化和存储工作线程
                 futures = []
-                futures.append(executor.submit(self._text_splitter_worker))
                 futures.append(executor.submit(self._embedding_worker))
                 futures.append(executor.submit(self._storage_worker))
 
                 # 等待工作线程初始化完成
                 time.sleep(1)
 
-                # 流式读取并分发数据
-                logger.info("开始流式读取和处理...")
-                reader_generator = self._data_reader(max_items)
-
+                # 使用parallel_handle_json_data实现流式加载、处理和拆分
+                logger.info("开始数据流式加载、处理和拆分...")
+                
+                # 调用parallel_handle_json_data方法
                 item_count = 0
-                for item in reader_generator:
-                    if self.stop_event.is_set() or self.pipeline_error:
+                total_chunks = 0
+                
+                for text_chunks, chunk_metadata in self.json_handle.parallel_handle_json_data(
+                    json_name=self.json_file, 
+                    max_items=max_items
+                ):
+                    if self.stop_event.is_set():
                         break
-
-                    item_count += 1
-                    processed_item = self._process_item(item)
-                    if processed_item:
+                    
+                    # 将拆分结果放入chunk_queue
+                    for text, meta in zip(text_chunks, chunk_metadata):
+                        if self.stop_event.is_set():
+                            break
+                        
                         # 等待队列有空间再放入数据
-                        while self.raw_queue.full() and not self.stop_event.is_set():
+                        while self.chunk_queue.full() and not self.stop_event.is_set():
                             time.sleep(0.1)
-
-                        self.raw_queue.put(processed_item)
-                        self.stats['processed_items'] += 1
-
-                    # 定期报告进度
-                    if item_count % 10 == 0:  # 每10条报告一次
-                        logger.info(f"已处理 {item_count} 条数据")
-
+                        
+                        self.chunk_queue.put((text, meta))
+                        item_count += 1
+                        total_chunks += len(text_chunks)
+                        
+                        # 定期报告进度
+                        if item_count % 100 == 0:  # 每100条报告一次
+                            logger.info(f"已分发 {item_count} 个文本块")
+                
+                self.stats['generated_chunks'] = total_chunks
+                logger.info(f"文本分割完成：共生成 {total_chunks} 个文本块")
+                
                 self.pipeline_finished['reader'] = True
-
-                # 等待各个阶段队列清空
-                logger.info("等待文本拆分完成...")
-                self.raw_queue.join()
                 self.pipeline_finished['splitter'] = True
-                logger.info("文本拆分完成")
 
+                # 等待向量化完成
                 logger.info("等待向量化完成...")
                 self.chunk_queue.join()
                 self.pipeline_finished['embedder'] = True
                 logger.info("向量化完成")
 
+                # 等待存储完成
                 logger.info("等待存储完成...")
                 self.embedding_queue.join()
                 self.pipeline_finished['storage'] = True
