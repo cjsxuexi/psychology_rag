@@ -1,34 +1,54 @@
 import time
 from typing import Optional, Dict
 
-from langchain_core.runnables import Runnable, RunnableParallel, RunnableSequence
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
 from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from src.data_process.base_stream_processor import BaseStreamProcessor, get_system_recommendations
+from src.data_process.base_stream_processor import get_system_recommendations
 from src.data_process.milvus_stream_processor import MilvusStreamProcessor
 from src.embedding.M3EEmbedding import generate_dense_embeddings_with_m3e
 
 
 class MilvusLCELStreamProcessor(MilvusStreamProcessor):
-    # 现有代码保持不变...
 
     def create_lcel_pipeline(self):
         """
         创建基于 Langchain LCEL 的处理管道
         """
-        # 步骤1: JSON解析分块
-        def json_parser(json_file, max_items):
-            """JSON解析分块函数"""
+
+        # 步骤1: JSON解析分块（批量处理）
+        def json_parser_step(params):
+            """JSON解析分块步骤，每20个chunk返回一次"""
+            json_file = params["json_file"]
+            max_items = params["max_items"]
+
+            batch_size = 20
+            batch = []
+            total_count = 0
+
+            # 直接处理JSON数据并批量返回
             for text_chunks, chunk_metadata in self.json_handle.parallel_handle_json_data(
-                json_name=json_file,
-                max_items=max_items
+                    json_name=json_file,
+                    max_items=max_items
             ):
                 for text, meta in zip(text_chunks, chunk_metadata):
-                    yield {"text": text, "metadata": meta}
+                    item = {"text": text, "metadata": meta}
+                    batch.append(item)
+                    total_count += 1
+
+                    # 当批量达到20个时返回
+                    if len(batch) >= batch_size:
+                        logger.info(f"Returning batch of {len(batch)} items (total: {total_count})")
+                        yield batch
+                        batch = []
+
+            # 返回剩余的不足一批的数据
+            if batch:
+                logger.info(f"Returning final batch of {len(batch)} items (total: {total_count})")
+                yield batch
+
+            logger.info(f"Parsed total {total_count} items from JSON")
 
         # 步骤2: 向量化处理
         def embedder(input_items):
@@ -41,19 +61,31 @@ class MilvusLCELStreamProcessor(MilvusStreamProcessor):
             elif not hasattr(input_items, '__iter__') or isinstance(input_items, (str, bytes)):
                 logger.error(f"Embedder received non-iterable input: {type(input_items)}")
                 return []
-            
-            results = []
-            for input_data in input_items:
-                logger.info(f"Embedder processing input_data: {type(input_data)}")
-                if isinstance(input_data, dict) and "text" in input_data:
-                    text = input_data["text"]
-                    metadata = input_data.get("metadata", {})
 
-                    # 使用现有的向量化逻辑
-                    embedding = generate_dense_embeddings_with_m3e([text])[0]
-                    results.append({"text": text, "metadata": metadata, "embedding": embedding})
+            # 收集所有有效文本和元数据
+            valid_items = []
+            texts = []
+            metadatas = []
+
+            for input_data in input_items:
+                if isinstance(input_data, dict) and "text" in input_data:
+                    valid_items.append(input_data)
+                    texts.append(input_data["text"])
+                    metadatas.append(input_data.get("metadata", {}))
                 else:
                     logger.error(f"Embedder input data is not a valid dict: {type(input_data)}")
+
+            # 批量生成嵌入
+            results = []
+            if texts:
+                logger.info(f"Batch embedding {len(texts)} items")
+                embeddings = generate_dense_embeddings_with_m3e(texts)
+
+                # 组合结果
+                for item, text, metadata, embedding in zip(valid_items, texts, metadatas, embeddings):
+                    results.append({"text": text, "metadata": metadata, "embedding": embedding})
+
+            logger.info(f"Successfully embedded {len(results)} items")
             return results
 
         # 步骤3: 存储处理
@@ -67,25 +99,39 @@ class MilvusLCELStreamProcessor(MilvusStreamProcessor):
             elif not hasattr(input_items, '__iter__') or isinstance(input_items, (str, bytes)):
                 logger.error(f"Storage received non-iterable input: {type(input_items)}")
                 return []
-            
-            results = []
-            for input_data in input_items:
-                logger.info(f"Processing input_data: {type(input_data)}")
-                if isinstance(input_data, dict) and all(k in input_data for k in ["text", "metadata", "embedding"]):
-                    text = input_data["text"]
-                    metadata = input_data["metadata"]
-                    embedding = input_data["embedding"]
 
-                    # 使用现有的存储逻辑
-                    self.milvus_storage.insert_data(
-                        texts=[text],
-                        embeddings=[embedding],
-                        metadata_list=[metadata],
-                        batch_size=1
-                    )
-                    results.append({"status": "success", "text": text[:50] + "..." if len(text) > 50 else text})
+            # 收集所有数据用于批量处理
+            texts = []
+            embeddings = []
+            metadata_list = []
+            valid_items = []
+
+            for input_data in input_items:
+                if isinstance(input_data, dict) and all(k in input_data for k in ["text", "metadata", "embedding"]):
+                    texts.append(input_data["text"])
+                    embeddings.append(input_data["embedding"])
+                    metadata_list.append(input_data["metadata"])
+                    valid_items.append(input_data)
                 else:
                     logger.error(f"Input data is missing required keys: {type(input_data)}")
+
+            # 批量存储所有有效数据
+            if texts:
+                logger.info(f"Batch storing {len(texts)} items")
+                self.milvus_storage.insert_data(
+                    texts=texts,
+                    embeddings=embeddings,
+                    metadata_list=metadata_list,
+                    batch_size=len(texts)
+                )
+
+            # 生成结果，仅用于测试
+            results = []
+            for item in valid_items:
+                text = item["text"]
+                results.append({"status": "success", "text": text[:50] + "..." if len(text) > 50 else text})
+
+            logger.info(f"Successfully stored {len(results)} items")
             return results
 
         # 在存储步骤添加重试
@@ -94,27 +140,13 @@ class MilvusLCELStreamProcessor(MilvusStreamProcessor):
             """带重试的存储处理函数"""
             return storage(input_items)
 
+        # 将函数转换为可运行对象
+        json_parser_runnable = RunnableLambda(json_parser_step)
+        embedder_runnable = RunnableLambda(embedder)
+        storage_runnable = RunnableLambda(storage_with_retry)
 
-
-        # 创建 LCEL 管道
-        def process_pipeline(params):
-            """Complete pipeline processing with proper streaming"""
-            # Step 1: Parse JSON
-            json_items = list(json_parser(params["json_file"], params["max_items"]))
-            logger.info(f"Parsed {len(json_items)} items from JSON")
-            
-            # Step 2: Embed items
-            embedded_items = embedder(json_items)
-            logger.info(f"Embedded {len(embedded_items)} items")
-            
-            # Step 3: Store items
-            stored_items = storage_with_retry(embedded_items)
-            logger.info(f"Stored {len(stored_items)} items")
-            
-            return stored_items
-
-        # 创建单个可运行对象
-        pipeline = RunnableLambda(process_pipeline)
+        # 使用 LCEL 管道语法创建完整管道
+        pipeline = json_parser_runnable | embedder_runnable | storage_runnable
 
         return pipeline
 
@@ -142,14 +174,19 @@ class MilvusLCELStreamProcessor(MilvusStreamProcessor):
             item_count = 0
 
             # 执行管道
-            for result in pipeline.stream({
+            for batch_result in pipeline.stream({
                 "json_file": self.json_file,
                 "max_items": max_items
             }):
-                item_count += 1
-                if item_count % 5 == 0:  # 每5条报告一次
-                    logger.info(f"已处理 {item_count} 个文本块")
-                    logger.info(f"处理结果: {result}")
+                # 每个 batch_result 是一个包含多个项目的列表
+                batch_size = len(batch_result)
+                item_count += batch_size
+
+                if batch_size > 0:
+                    logger.info(f"处理完成一批次，共 {batch_size} 个文本块 (累计: {item_count})")
+                    # 记录第一个结果作为示例
+                    if batch_result:
+                        logger.info(f"批次结果示例: {batch_result[0]}")
 
             self.stats['generated_chunks'] = item_count
             logger.info(f"文本处理完成：共处理 {item_count} 个文本块")
@@ -164,13 +201,14 @@ class MilvusLCELStreamProcessor(MilvusStreamProcessor):
 
         return self.stats
 
+
 def stream_process_psychology_data_milvus_lcel(json_file: str = "PsyDTCorpus_train_mulit_turn_packing.json",
-                                             max_items: Optional[int] = None,
-                                             auto_configure: bool = True,
-                                             milvus_host: str = "localhost",
-                                             milvus_port: str = "19530",
-                                             collection_name: str = "psychology_dialogues",
-                                             **kwargs) -> Dict:
+                                               max_items: Optional[int] = None,
+                                               auto_configure: bool = True,
+                                               milvus_host: str = "localhost",
+                                               milvus_port: str = "19530",
+                                               collection_name: str = "psychology_dialogues",
+                                               **kwargs) -> Dict:
     """
     使用 LCEL 的便捷 Milvus 流式处理函数
     """

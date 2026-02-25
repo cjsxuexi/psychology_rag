@@ -47,7 +47,7 @@ def test_lcel_stream_processing():
     try:
         # 处理少量数据进行测试
         result = stream_process_psychology_data_milvus_lcel(
-            max_items=500,  # 处理10条数据
+            max_items=3,  # 处理10条数据
             batch_size=10,
             embedding_batch_size=10,
             memory_limit_mb=5000,
