@@ -158,85 +158,7 @@ class RetrievalEnhanced:
             logger.error(f"重排序过程失败: {str(e)}")
             raise RuntimeError(f"Rerank failed: {str(e)}")
 
-    def hybrid_search(self,
-                      query_text: str,
-                      search_results: List[Dict[str, Any]],
-                      top_k: int = 5,
-                      alpha: float = 0.5) -> List[Dict[str, Any]]:
-        """
-        混合搜索：结合原始相似度分数和重排序分数
 
-        Args:
-            query_text: 查询文本
-            search_results: 检索结果
-            top_k: 返回结果数量
-            alpha: 混合权重 (0=完全依赖原始分数, 1=完全依赖rerank分数)
-
-        Returns:
-            List[Dict]: 混合排序后的结果
-        """
-        try:
-            if not search_results:
-                return []
-
-            logger.info(f"执行混合搜索，alpha={alpha}")
-
-            # 先进行重排序获取分数
-            reranked_results = self.rerank_results(
-                query_text=query_text,
-                search_results=search_results,
-                top_k=None,  # 先获取全部结果
-                return_scores=True
-            )
-
-            if not reranked_results:
-                logger.warning("重排序结果为空，直接返回空列表")
-                return []
-
-            # 归一化分数
-            rerank_scores = [result['rerank_score'] for result in reranked_results]
-            original_distances = [result.get('original_distance', result.get('distance', 0))
-                                  for result in reranked_results]
-
-            # 归一化到0-1范围
-            max_rerank = max(rerank_scores) if rerank_scores else 1
-            min_rerank = min(rerank_scores) if rerank_scores else 0
-            max_distance = max(original_distances) if original_distances else 1
-            min_distance = min(original_distances) if original_distances else 0
-
-            # 计算混合分数
-            hybrid_results = []
-            for result in reranked_results:
-                # 归一化rerank分数 (越高越好)
-                norm_rerank = (result['rerank_score'] - min_rerank) / (max_rerank - min_rerank) \
-                    if max_rerank != min_rerank else 0.5
-
-                # 归一化距离分数 (越低越好，所以1-归一化值)
-                orig_dist = result.get('original_distance', result.get('distance', 0))
-                norm_distance = 1 - (orig_dist - min_distance) / (max_distance - min_distance) \
-                    if max_distance != min_distance else 0.5
-
-                # 计算混合分数
-                hybrid_score = alpha * norm_rerank + (1 - alpha) * norm_distance
-
-                result_copy = result.copy()
-                result_copy['hybrid_score'] = hybrid_score
-                result_copy['norm_rerank_score'] = norm_rerank
-                result_copy['norm_distance_score'] = norm_distance
-                hybrid_results.append(result_copy)
-
-            # 按混合分数排序
-            hybrid_results.sort(key=lambda x: x['hybrid_score'], reverse=True)
-
-            # 返回top-k结果
-            final_results = hybrid_results[:top_k]
-
-            logger.success(f"混合搜索完成，返回{len(final_results)}个结果")
-            return final_results
-
-        except Exception as e:
-            logger.error(f"混合搜索失败: {str(e)}")
-            raise RuntimeError(f"Hybrid search failed: {str(e)}")
 
     def get_model_info(self) -> Dict[str, Any]:
         """
@@ -284,9 +206,3 @@ if __name__ == '__main__':
     print("\n重排序结果：")
     for res in reranked:
         print(f"内容: {res['content'][:50]} | 重排序分数: {res['rerank_score']:.4f}")
-
-    # 执行混合搜索
-    hybrid = reranker.hybrid_search(test_query, test_results, top_k=2, alpha=0.7)
-    print("\n混合搜索结果：")
-    for res in hybrid:
-        print(f"内容: {res['content'][:50]} | 混合分数: {res['hybrid_score']:.4f}")
