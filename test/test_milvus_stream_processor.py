@@ -79,7 +79,8 @@ def test_search_functionality():
     processor = None
     try:
         # 创建处理器实例
-        processor = MilvusStreamProcessor(collection_name="psychology_dialogues")
+        from src.retrieval_augment.retrieval_enhanced import RetrievalEnhanced
+        processor = RetrievalEnhanced(collection_name="psychology_dialogues")
         
         # 执行搜索
         query_text = ("我不确定他是不是还爱我")

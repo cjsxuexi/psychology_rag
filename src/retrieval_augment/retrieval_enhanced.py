@@ -3,6 +3,9 @@ from typing import List, Dict, Any, Optional
 from loguru import logger
 from sentence_transformers import CrossEncoder
 
+# 导入MilvusStorage
+from src.database.milvus_storage import create_milvus_storage
+
 # 注意：如果common.model_util不存在，需确保load_model方法能正确返回模型路径
 # 这里为了代码可运行性，临时定义一个mock的load_model（实际使用时替换为你的真实实现）
 try:
@@ -29,7 +32,10 @@ class RetrievalEnhanced:
                  model_name: str = "BAAI/bge-reranker-v2-m3",
                  use_fp16: bool = True,
                  batch_size: int = 32,
-                 max_length: int = 512):
+                 max_length: int = 512,
+                 collection_name: str = "psychology_dialogues",
+                 milvus_host: str = "localhost",
+                 milvus_port: str = "19530"):
         """
         初始化LlamaIndex风格的检索器
 
@@ -38,15 +44,23 @@ class RetrievalEnhanced:
             use_fp16: 是否使用半精度推理（仅在CUDA可用时生效）
             batch_size: 批处理大小
             max_length: 最大序列长度（设置到tokenizer）
+            collection_name: Milvus集合名称
+            milvus_host: Milvus服务主机
+            milvus_port: Milvus服务端口
         """
         self.model_name = model_name
         self.use_fp16 = use_fp16 and torch.cuda.is_available()  # 仅CUDA可用时启用半精度
         self.batch_size = batch_size
         self.max_length = max_length
+        self.collection_name = collection_name
+        self.milvus_host = milvus_host
+        self.milvus_port = milvus_port
         self.reranker_model = None
+        self.milvus_storage = None
 
-        # 初始化模型
+        # 初始化模型和Milvus存储
         self._load_reranker_model()
+        self._initialize_milvus_storage()
 
     def _load_reranker_model(self):
         """加载bge-reranker模型（适配新版sentence-transformers）"""
@@ -79,6 +93,56 @@ class RetrievalEnhanced:
         except Exception as e:
             logger.error(f"bge-reranker模型加载失败: {str(e)}")
             raise RuntimeError(f"Failed to load bge-reranker model: {str(e)}")
+
+    def _initialize_milvus_storage(self):
+        """初始化Milvus存储"""
+        try:
+            logger.info("正在初始化Milvus存储...")
+            self.milvus_storage = create_milvus_storage(
+                host=self.milvus_host,
+                port=self.milvus_port,
+                collection_name=self.collection_name
+            )
+            logger.success("Milvus存储初始化成功")
+        except Exception as e:
+            logger.error(f"Milvus存储初始化失败: {str(e)}")
+            raise RuntimeError(f"Failed to initialize Milvus storage: {str(e)}")
+
+    def search_similar_chunks(self, query_text: str, top_k: int = 5) -> List[Dict[str, Any]]:
+        """
+        在Milvus中搜索相似的文本块
+
+        Args:
+            query_text: 查询文本
+            top_k: 返回top-k结果
+
+        Returns:
+            List[Dict]: 搜索结果列表
+        """
+        try:
+            # 使用MilvusStorage的搜索方法
+            results = self.milvus_storage.search_similar(
+                query_text=query_text,
+                top_k=top_k,
+                output_fields=["content", "tag", "total_turns"]
+            )
+
+            # 转换结果格式以保持兼容性
+            similar_chunks = []
+            for result in results:
+                similar_chunks.append({
+                    'content': result.get('content', ''),
+                    'tag': result.get('tag', ''),
+                    'total_turns': result.get('total_turns', 0),
+                    'distance': result.get('distance', 0.0),
+                    'chunk_id': result.get('chunk_id', 0)
+                })
+
+            return similar_chunks
+
+        except Exception as e:
+            logger.error(f"Milvus搜索失败: {str(e)}")
+            raise
 
     def rerank_results(self,
                        query_text: str,
@@ -181,6 +245,43 @@ class RetrievalEnhanced:
         """字符串表示"""
         info = self.get_model_info()
         return f"RetrievalEnhanced(model={info['model_name']}, device={info['device']}, precision={info['precision']}, max_length={info['max_length']})"
+
+    def retrieval(self, query: str, search_top_k: int = 20, rerank_top_k: int = 4) -> List[Dict[str, Any]]:
+        """
+        完整的检索增强流程：Milvus检索 + 重排序
+
+        Args:
+            query: 用户查询问题
+            search_top_k: Milvus检索返回的top-k结果数
+            rerank_top_k: 重排序后返回的top-k结果数
+
+        Returns:
+            List[Dict]: 重排序后的检索结果列表
+        """
+        try:
+            logger.info(f"开始检索增强流程，查询: {query[:50]}...")
+
+            # 1. Milvus检索
+            milvus_results = self.search_similar_chunks(query_text=query, top_k=search_top_k)
+
+            # 2. 重排序
+            reranked_results = self.rerank_results(query_text=query, search_results=milvus_results, top_k=rerank_top_k, return_scores=True)
+
+            logger.success(f"检索增强流程完成，返回{len(reranked_results)}条高质量结果")
+            return reranked_results
+
+        except Exception as e:
+            logger.error(f"检索增强流程失败: {str(e)}")
+            raise RuntimeError(f"Retrieval failed: {str(e)}")
+
+    def close(self):
+        """关闭资源"""
+        try:
+            if hasattr(self, 'milvus_storage') and self.milvus_storage:
+                self.milvus_storage.close()
+            logger.info("RetrievalEnhanced资源已释放")
+        except Exception as e:
+            logger.error(f"关闭资源时出错: {str(e)}")
 
     def __repr__(self) -> str:
         """详细字符串表示"""
