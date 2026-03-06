@@ -5,19 +5,102 @@
 
 import os
 import sys
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 from loguru import logger
-
 from src.common.file_utils import get_config
+from src.application.app1 import call_qwen_plus
 
 # 添加项目根目录到Python路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+
+class SimpleConversationMemory:
+    """
+    简单的对话记忆类，用于记录对话历史并生成摘要
+    """
+    
+    def __init__(self):
+        """初始化对话记忆"""
+        self.conversation_history = []
+        self.summary = ""
+    
+    def save_context(self, inputs: Dict[str, str], outputs: Dict[str, str]):
+        """
+        保存对话上下文
+        
+        Args:
+            inputs: 输入内容，包含"input"键
+            outputs: 输出内容，包含"output"键
+        """
+        user_input = inputs.get("input", "")
+        ai_output = outputs.get("output", "")
+        
+        if user_input and ai_output:
+            self.conversation_history.append({"user": user_input, "ai": ai_output})
+            logger.info(f"对话历史已更新，当前记录数: {len(self.conversation_history)}")
+            # 生成新的摘要
+            self._update_summary()
+    
+    def load_memory_variables(self, inputs: Dict) -> Dict[str, str]:
+        """
+        加载记忆变量
+        
+        Args:
+            inputs: 输入参数
+            
+        Returns:
+            Dict: 包含历史摘要的字典
+        """
+        return {"history": self.summary}
+    
+    def _update_summary(self):
+        """
+        更新对话摘要
+        """
+        if not self.conversation_history:
+            self.summary = ""
+            return
+        
+        # 生成摘要的提示词
+        summary_prompt = f"请为以下对话生成一个简洁的摘要，突出核心问题和解决方案：\n\n"
+        
+        # 构建对话历史字符串
+        history_str = "\n".join([
+            f"用户: {item['user']}\nAI: {item['ai']}"
+            for item in self.conversation_history
+        ])
+        
+        prompt = summary_prompt + history_str
+        
+        try:
+            # 使用QWEN模型生成摘要
+            self.summary = call_qwen_plus(prompt)
+            logger.info(f"对话摘要已更新，摘要长度: {len(self.summary)}")
+        except Exception as e:
+            logger.warning(f"生成对话摘要失败: {str(e)}")
+            # 降级方案：使用最后几条对话作为摘要
+            if len(self.conversation_history) <= 3:
+                self.summary = history_str
+            else:
+                recent_history = "\n".join([
+                    f"用户: {item['user']}\nAI: {item['ai']}"
+                    for item in self.conversation_history[-3:]
+                ])
+                self.summary = f"最近的对话：\n{recent_history}"
+    
+    def clear(self):
+        """
+        清空对话记忆
+        """
+        self.conversation_history = []
+        self.summary = ""
+        logger.info("对话记忆已清空")
+
+
 # 导入核心组件
 from src.data_process.milvus_stream_processor import MilvusStreamProcessor
 from src.retrieval_augment.retrieval_enhanced import RetrievalEnhanced
-from src.application.app1 import call_qwen_plus
 
 
 class PsychologyChatBot:
@@ -58,21 +141,25 @@ class PsychologyChatBot:
     def _initialize_components(self):
         """初始化核心组件"""
         try:
-            # 1. 初始化Milvus检索器
-            logger.info("正在初始化Milvus检索器...")
-            self.milvus_processor = MilvusStreamProcessor(
-                milvus_host=self.milvus_host,
-                milvus_port=self.milvus_port,
-                collection_name=self.collection_name
-            )
-
-            # 2. 初始化重排序器
-            logger.info("正在初始化重排序器...")
+            # 1. 初始化检索增强器（集成Milvus和重排序）
+            logger.info("正在初始化检索增强器...")
             self.retrieval_enhancer = RetrievalEnhanced(
                 model_name=self.reranker_model,
                 use_fp16=True,
-                batch_size=16
+                batch_size=16,
+                collection_name=self.collection_name,
+                milvus_host=self.milvus_host,
+                milvus_port=self.milvus_port
             )
+
+            # 2. 初始化对话记忆组件
+            logger.info("正在初始化对话记忆组件...")
+            try:
+                self.conversation_memory = SimpleConversationMemory()
+                logger.info("对话记忆组件初始化成功")
+            except Exception as e:
+                logger.warning(f"初始化对话记忆组件失败: {str(e)}，对话记忆功能将不可用")
+                self.conversation_memory = None
 
             logger.success("所有核心组件初始化成功")
 
@@ -80,68 +167,16 @@ class PsychologyChatBot:
             logger.error(f"组件初始化失败: {str(e)}")
             raise
 
-    def _search_similar_chunks(self, query: str, top_k: int = 20) -> List[Dict]:
-        """
-        从Milvus中检索相似的文本块
-        
-        Args:
-            query: 用户查询问题
-            top_k: 返回top-k结果
-            
-        Returns:
-            List[Dict]: 检索结果列表
-        """
-        try:
-            logger.info(f"开始Milvus检索，查询: {query[:50]}...")
-            results = self.milvus_processor.search_similar_chunks(
-                query_text=query,
-                top_k=top_k
-            )
 
-            logger.success(f"Milvus检索完成，返回{len(results)}条结果")
-            return results
 
-        except Exception as e:
-            logger.error(f"Milvus检索失败: {str(e)}")
-            raise
-
-    def _rerank_results(self, query: str, search_results: List[Dict], top_k: int = 4) -> List[Dict]:
-        """
-        使用RetrievalEnhanced对检索结果进行重排序
-        
-        Args:
-            query: 用户查询问题
-            search_results: Milvus检索结果
-            top_k: 重排序后返回top-k结果
-            
-        Returns:
-            List[Dict]: 重排序后的结果列表
-        """
-        try:
-            logger.info(f"开始重排序，输入{len(search_results)}条结果...")
-
-            reranked_results = self.retrieval_enhancer.rerank_results(
-                query_text=query,
-                search_results=search_results,
-                top_k=top_k,
-                return_scores=True
-            )
-
-            logger.success(f"重排序完成，返回{len(reranked_results)}条高质量结果")
-
-            return reranked_results
-
-        except Exception as e:
-            logger.error(f"重排序失败: {str(e)}")
-            raise
-
-    def _generate_response(self, query: str, contexts: List[Dict]) -> str:
+    def _generate_response(self, query: str, contexts: List[Dict], conversation_summary: str = "") -> str:
         """
         调用QWEN大模型生成回答
         
         Args:
             query: 用户查询问题
             contexts: 上下文信息列表
+            conversation_summary: 对话历史摘要
             
         Returns:
             str: 生成的回答
@@ -155,15 +190,20 @@ class PsychologyChatBot:
                 for idx, ctx in enumerate(contexts)
             ])
 
+            # 构建对话历史摘要
+            history_str = "" if not conversation_summary else f"\n\n【对话历史摘要】\n{conversation_summary}"
+
             # 构建提示词 - 使用配置文件中的心理学提示词模板
             psychology_prompt_template = get_config("psychology_prompt.txt")
 
             # 渲染模板
             prompt = psychology_prompt_template.format(
                 context_str=context_str,
-                query=query
+                query=query,
+                history_str=history_str
             )
 
+            logger.info(f"调用QWEN模型的提示词: {prompt[:600]}...")
             # 调用QWEN模型
             response = call_qwen_plus(prompt)
 
@@ -186,17 +226,29 @@ class PsychologyChatBot:
         """
         try:
             logger.info(f"收到用户问题: {user_question}")
+            
+            # 获取对话历史摘要
+            conversation_summary = ""
+            if self.conversation_memory:
+                conversation_summary = self.conversation_memory.load_memory_variables({}).get("history", "")
+                logger.info(f"加载对话历史摘要: {conversation_summary[:100]}...")
 
-            # 1. Milvus检索获取前20条数据
-            milvus_results = self._search_similar_chunks(user_question, top_k=20)
-
-            # 2. RetrievalEnhanced重排序获取前4条数据
-            reranked_results = self._rerank_results(user_question, milvus_results, top_k=4)
+            # 1. 使用检索增强器获取高质量结果
+            reranked_results = self.retrieval_enhancer.retrieval(user_question, search_top_k=20, rerank_top_k=4)
+            milvus_results = reranked_results  # 保持向后兼容
 
             # 3. 调用QWEN大模型生成回答
-            ai_response = self._generate_response(user_question, reranked_results)
+            ai_response = self._generate_response(user_question, reranked_results, conversation_summary)
 
-            # 4. 构建完整响应
+            # 4. 更新对话记忆
+            if self.conversation_memory:
+                self.conversation_memory.save_context(
+                    {"input": user_question},
+                    {"output": ai_response}
+                )
+                logger.info("对话历史已更新到记忆组件")
+
+            # 5. 构建完整响应
             response_data = {
                 "user_question": user_question,
                 "ai_response": ai_response,
@@ -212,6 +264,7 @@ class PsychologyChatBot:
                     }
                     for idx, ctx in enumerate(reranked_results)
                 ],
+                "conversation_summary": conversation_summary[:200] + ("..." if len(conversation_summary) > 200 else ""),
                 "status": "success"
             }
 
@@ -226,6 +279,7 @@ class PsychologyChatBot:
                 "milvus_raw_count": 0,
                 "final_context_count": 0,
                 "contexts_used": [],
+                "conversation_summary": "",
                 "status": "error",
                 "error_message": str(e)
             }
@@ -283,8 +337,8 @@ class PsychologyChatBot:
     def close(self):
         """关闭资源"""
         try:
-            if hasattr(self, 'milvus_processor'):
-                self.milvus_processor.close()
+            if hasattr(self, 'retrieval_enhancer'):
+                self.retrieval_enhancer.close()
             logger.info("心理咨询师AI问答机器人资源已释放")
         except Exception as e:
             logger.error(f"关闭资源时出错: {str(e)}")
