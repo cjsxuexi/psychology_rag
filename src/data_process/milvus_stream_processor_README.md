@@ -70,10 +70,14 @@ try:
     # 执行流式处理
     result = processor.process_stream(max_items=5000)
 
-    # 向量搜索
-    search_results = processor.search_similar_chunks("查询文本", top_k=10)
-    for result in search_results:
-        print(f"相似度: {result['distance']}, 内容: {result['chunk_text'][:100]}")
+    # 注意：search_similar_chunks 方法已移至 RetrievalEnhanced 类
+    # 如需使用向量搜索功能，请使用 RetrievalEnhanced 类
+    # 示例：
+    # from src.retrieval_augment.retrieval_enhanced import RetrievalEnhanced
+    # retriever = RetrievalEnhanced(collection_name="psychology_dialogues")
+    # search_results = retriever.search_similar_chunks("查询文本", top_k=10)
+    # for result in search_results:
+    #     print(f"相似度: {result['distance']}, 内容: {result['content'][:100]}")
 
 finally:
     processor.close()  # 记得关闭连接

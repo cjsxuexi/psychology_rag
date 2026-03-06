@@ -12,11 +12,11 @@ import numpy as np
 from loguru import logger
 from pymilvus import (
     connections, Collection, CollectionSchema, FieldSchema, DataType,
-    utility
+    utility, db
 )
 
 # 延迟导入，在函数中使用时再导入
-# from embedding.M3EEmbedding import generate_dense_embeddings_with_m3e
+# from src.embedding.M3EEmbedding import generate_dense_embeddings_with_m3e
 
 
 class MilvusStorage:
@@ -28,7 +28,10 @@ class MilvusStorage:
     def __init__(self,
                  host: str = "localhost",
                  port: str = "19530",
-                 collection_name: str = "psychology_dialogues"):
+                 collection_name: str = "psychology_dialogues",
+                 database: str = "default",
+                 user: str = "",
+                 password: str = ""):
         """
         初始化Milvus存储
         
@@ -36,13 +39,19 @@ class MilvusStorage:
             host: Milvus服务主机地址
             port: Milvus服务端口
             collection_name: 集合名称
+            database: 数据库名称
+            user: Milvus认证用户名
+            password: Milvus认证密码
         """
         self.host = host
         self.port = port
         self.collection_name = collection_name
+        self.database = database
+        self.user = user
+        self.password = password
         self.collection = None
         self.connected = False
-        
+
         # 初始化连接
         self._connect()
 
@@ -50,17 +59,47 @@ class MilvusStorage:
         """建立Milvus连接"""
         try:
             logger.info(f"正在连接Milvus: {self.host}:{self.port}")
-            connections.connect(
-                alias="default",
-                host=self.host,
-                port=self.port
-            )
+
+            # 连接Milvus服务
+            connect_params = {
+                "alias": "default",
+                "host": self.host,
+                "port": self.port
+            }
+            
+            # 如果提供了用户名和密码，则添加认证信息
+            if self.user and self.password:
+                connect_params["user"] = self.user
+                connect_params["password"] = self.password
+            
+            connections.connect(**connect_params)
+
+            # 尝试使用指定数据库（如果支持）
+            if self.database and self.database != "default":
+                try:
+                    # 尝试切换到指定数据库
+                    db.using_database(self.database)
+                    logger.info(f"成功切换到数据库: {self.database}")
+                except Exception as db_error:
+                    # 如果切换失败，尝试创建数据库
+                    try:
+                        logger.info(f"数据库 {self.database} 不存在，尝试创建...")
+                        db.create_database(self.database)
+                        logger.success(f"数据库 {self.database} 创建成功")
+                        # 再次尝试切换到新创建的数据库
+                        db.using_database(self.database)
+                        logger.info(f"成功切换到数据库: {self.database}")
+                    except Exception as create_error:
+                        # 如果创建也失败，使用默认数据库
+                        logger.warning(f"数据库创建失败: {str(create_error)}，使用默认数据库")
+                        # 继续使用默认数据库
+
             self.connected = True
             logger.success("Milvus连接成功")
-            
+
             # 检查并初始化集合
             self._initialize_collection()
-            
+
         except Exception as e:
             logger.error(f"Milvus连接失败: {str(e)}")
             raise
@@ -75,7 +114,7 @@ class MilvusStorage:
             else:
                 logger.info(f"创建新集合: {self.collection_name}")
                 self._create_collection()
-                
+
         except Exception as e:
             logger.error(f"集合初始化失败: {str(e)}")
             raise
@@ -157,11 +196,11 @@ class MilvusStorage:
             logger.warning(f"获取最大file_id失败: {str(e)}，使用默认值0")
             return 0
 
-    def insert_data(self, 
-                   texts: List[str], 
-                   embeddings: List[np.ndarray],
-                   metadata_list: List[Dict],
-                   batch_size: int = 100) -> int:
+    def insert_data(self,
+                    texts: List[str],
+                    embeddings: List[np.ndarray],
+                    metadata_list: List[Dict],
+                    batch_size: int = 100) -> int:
         """
         批量插入数据到Milvus
         
@@ -210,10 +249,10 @@ class MilvusStorage:
 
                     # 执行批量插入
                     insert_result = self.collection.insert([
-                        file_ids,      # file_id字段
+                        file_ids,  # file_id字段
                         embeddings_list,  # embedding字段
-                        contents,      # content字段
-                        tags,          # tag字段
+                        contents,  # content字段
+                        tags,  # tag字段
                         total_turns_list  # total_turns字段
                     ])
 
@@ -237,10 +276,10 @@ class MilvusStorage:
             logger.error(f"数据插入失败: {str(e)}")
             raise
 
-    def search_similar(self, 
-                      query_text: str, 
-                      top_k: int = 5,
-                      output_fields: List[str] = None) -> List[Dict]:
+    def search_similar(self,
+                       query_text: str,
+                       top_k: int = 5,
+                       output_fields: List[str] = None) -> List[Dict]:
         """
         在Milvus中搜索相似的文本块
         
@@ -285,11 +324,11 @@ class MilvusStorage:
                         'distance': hit.distance,
                         'chunk_id': hit.id
                     }
-                    
+
                     # 从实体中提取各字段信息
                     for field in output_fields:
                         chunk_info[field] = hit.entity.get(field, '')
-                    
+
                     similar_chunks.append(chunk_info)
 
             return similar_chunks
@@ -344,8 +383,11 @@ class MilvusStorage:
 
 # 便捷使用的包装函数
 def create_milvus_storage(host: str = "localhost",
-                         port: str = "19530",
-                         collection_name: str = "psychology_dialogues") -> MilvusStorage:
+                          port: str = "19530",
+                          collection_name: str = "psychology_dialogues",
+                          database: str = "default",
+                          user: str = "root",
+                          password: str = "Milvus") -> MilvusStorage:
     """
     创建Milvus存储实例的便捷函数
     
@@ -353,6 +395,9 @@ def create_milvus_storage(host: str = "localhost",
         host: Milvus服务主机
         port: Milvus服务端口
         collection_name: 集合名称
+        database: 数据库名称
+        user: Milvus认证用户名
+        password: Milvus认证密码
         
     Returns:
         MilvusStorage: Milvus存储实例
@@ -360,71 +405,8 @@ def create_milvus_storage(host: str = "localhost",
     return MilvusStorage(
         host=host,
         port=port,
-        collection_name=collection_name
+        collection_name=collection_name,
+        database=database,
+        user=user,
+        password=password
     )
-
-
-def test_milvus_storage():
-    """测试Milvus存储功能"""
-    print("=== Milvus存储功能测试 ===\n")
-    
-    try:
-        # 创建存储实例
-        storage = create_milvus_storage()
-        
-        # 测试数据
-        test_texts = [
-            "这是一个测试文本块1，用于验证Milvus存储功能。",
-            "这是第二个测试文本块，包含心理咨询相关内容。",
-            "第三个测试文本，用于测试向量搜索功能。"
-        ]
-        
-        test_metadata = [
-            {'tag': '测试标签1', 'total_turns': 2},
-            {'tag': '心理咨询', 'total_turns': 3},
-            {'tag': '搜索测试', 'total_turns': 1}
-        ]
-        
-        # 生成向量
-        print("正在生成测试向量...")
-        embeddings = generate_dense_embeddings_with_m3e(test_texts)
-        print(f"生成了 {len(embeddings)} 个向量，维度: {embeddings[0].shape}")
-        
-        # 插入数据
-        print("\n正在插入测试数据...")
-        inserted_count = storage.insert_data(
-            texts=test_texts,
-            embeddings=embeddings,
-            metadata_list=test_metadata,
-            batch_size=10
-        )
-        print(f"成功插入 {inserted_count} 条记录")
-        
-        # 测试搜索
-        print("\n正在测试搜索功能...")
-        search_results = storage.search_similar(
-            query_text="心理咨询技巧",
-            top_k=2
-        )
-        
-        print(f"搜索到 {len(search_results)} 个相似结果:")
-        for i, result in enumerate(search_results, 1):
-            print(f"{i}. 距离: {result['distance']:.4f}")
-            print(f"   内容: {result['content'][:50]}...")
-            print(f"   标签: {result['tag']}")
-        
-        # 获取统计信息
-        print("\n获取集合统计信息...")
-        stats = storage.get_collection_stats()
-        print(f"集合统计: {stats}")
-        
-        # 关闭连接
-        storage.close()
-        print("\n✅ Milvus存储测试完成")
-        
-    except Exception as e:
-        print(f"❌ 测试失败: {str(e)}")
-
-
-if __name__ == "__main__":
-    test_milvus_storage()
