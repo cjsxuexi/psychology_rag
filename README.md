@@ -198,7 +198,6 @@ export MILVUS_PORT="19530"
 
 ```bash
 # 运行核心功能测试
-python test/test_chat_application.py
 python test/test_milvus_stream_processor.py
 
 # 运行集成测试

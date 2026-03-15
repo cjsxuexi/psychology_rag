@@ -24,9 +24,11 @@ dependencies = [
     "transformers>=5.0.0",
     "llama-index-core>=0.10.0",      # LlamaIndex核心库
     "pydantic>=2.0.0",                # 配置校验（企业级数据校验）
+    "pytest>=8.0",
     "jsonschema>=4.21.0",  # JSON格式校验
     "fastapi>=0.104.0",               # Web API框架
     "uvicorn>=0.24.0",                # ASGI服务器
+    "networkx>=3.6.1",
 ]
 
 [[tool.uv.index]]
