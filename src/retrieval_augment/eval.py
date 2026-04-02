@@ -21,18 +21,23 @@ class RAGEvaluationResult:
 class RAGEvaluator:
     """RAG评估器"""
 
-    def __init__(self, use_ragas: bool = False):
+    def __init__(self, use_ragas: bool = False, llm=None):
         """
         初始化评估器
 
         Args:
             use_ragas: 是否使用ragas进行评估
+            llm: 可选，自定义LLM实例（用于ragas评估）。
+                 支持LangChain的LLM实例或OpenAI客户端。
+                 如果为None，ragas将使用环境变量中的默认配置。
         """
         self.use_ragas = use_ragas
         self.sim_model = None
-        
-        # 加载SentenceTransformer模型
-        if not use_ragas:
+        self.llm = llm
+
+        if use_ragas:
+            self._setup_ragas_llm()
+        else:
             self._load_models()
 
     def _load_models(self):
@@ -45,6 +50,30 @@ class RAGEvaluator:
             print(f"Warning: Failed to load SentenceTransformer model: {str(e)}")
             print("Using simple string-based evaluation as fallback")
             self.sim_model = None
+
+    def _setup_ragas_llm(self):
+        """配置Ragas使用的LLM"""
+        if self.llm is None:
+            # 未提供LLM，依赖环境变量或ragas默认配置
+            print("Info: No LLM provided for ragas. Using environment configuration.")
+            print("      Set OPENAI_API_KEY or configure ragas global LLM.")
+            return
+
+        try:
+            from ragas.llms import LangchainLLMWrapper
+            from ragas.metrics import ContextRelevance
+
+            # 包装LLM供ragas使用
+            ragas_llm = LangchainLLMWrapper(self.llm)
+
+            # 配置到指标
+            ContextRelevance.llm = ragas_llm
+
+            print(f"Info: Successfully configured ragas with custom LLM.")
+
+        except ImportError as e:
+            print(f"Warning: Failed to configure ragas LLM: {str(e)}")
+            print("         Ragas will use default configuration.")
 
     def evaluate_initial_retrieval(
         self,
@@ -235,12 +264,12 @@ class RAGEvaluator:
         k: int = 5
     ) -> RAGEvaluationResult:
         """
-        使用ragas评估检索效果
+        使用ragas评估检索效果（无监督，无需ground_truth）
         """
         try:
             import pandas as pd
             from ragas import evaluate
-            from ragas.metrics import context_relevancy, context_recall
+            from ragas.metrics import ContextRelevance
         except ImportError:
             raise RuntimeError("ragas is not installed. Please install it with 'pip install ragas'")
 
@@ -249,33 +278,33 @@ class RAGEvaluator:
         for query, results in zip(queries, retrieved_results):
             # 提取检索到的上下文
             contexts = [result.get('text', '') for result in results[:k]]
-            # ragas需要ground_truth，这里使用空字符串作为占位符
             data.append({
-                "question": query,
-                "contexts": contexts,
-                "ground_truth": ""
+                "user_input": query,
+                "retrieved_contexts": contexts
             })
-        
+
         # 转换为DataFrame
         df = pd.DataFrame(data)
-        
-        # 使用ragas评估
+
+        # 使用ragas评估（仅使用无需ground_truth的指标）
         result = evaluate(
             df,
-            metrics=[
-                context_recall,
-                context_relevancy
-            ]
+            metrics=[ContextRelevance]
         )
-        
+
         # 转换为现有结果格式
         metrics = result.to_dict()
         # 确保所有数值都是Python原生类型
         metrics = {k: float(v) if isinstance(v, (np.float32, np.float64)) else v for k, v in metrics.items()}
-        precision = float(metrics.get('context_relevancy', 0.0))
-        recall = float(metrics.get('context_recall', 0.0))
-        f1 = float(2 * (precision * recall) / (precision + recall + 1e-9))
-        
+
+        # ContextRelevance评估检索上下文与问题的相关性
+        context_relevance = float(metrics.get('context_relevance', 0.0))
+
+        # 使用context_relevance作为precision，recall和f1在无监督情况下用相同值
+        precision = context_relevance
+        recall = context_relevance
+        f1 = context_relevance
+
         return RAGEvaluationResult(
             precision=precision,
             recall=recall,
@@ -293,78 +322,72 @@ class RAGEvaluator:
         k: int = 5
     ) -> RAGEvaluationResult:
         """
-        使用ragas评估重排序效果
+        使用ragas评估重排序效果（无监督，无需ground_truth）
         """
         try:
             import pandas as pd
             from ragas import evaluate
-            from ragas.metrics import context_relevancy, context_recall
+            from ragas.metrics import ContextRelevance
         except ImportError:
             raise RuntimeError("ragas is not installed. Please install it with 'pip install ragas'")
 
-        # 构建ragas评估所需的数据结构
+        # 构建ragas评估所需的数据结构（重排序结果）
         data = []
         for query, reranked in zip(queries, reranked_results):
             # 提取重排序后的上下文
             contexts = [result.get('text', '') for result in reranked[:k]]
             data.append({
-                "question": query,
-                "contexts": contexts,
-                "ground_truth": ""
+                "user_input": query,
+                "retrieved_contexts": contexts
             })
-        
+
         # 转换为DataFrame
         df = pd.DataFrame(data)
-        
-        # 使用ragas评估
+
+        # 使用ragas评估重排序结果
         result = evaluate(
             df,
-            metrics=[
-                context_recall,
-                context_relevancy
-            ]
+            metrics=[ContextRelevance]
         )
-        
+
         # 计算初始检索的评估结果
         initial_data = []
         for query, initial in zip(queries, initial_results):
             contexts = [result.get('text', '') for result in initial[:k]]
             initial_data.append({
-                "question": query,
-                "contexts": contexts,
-                "ground_truth": ""
+                "user_input": query,
+                "retrieved_contexts": contexts
             })
-        
+
         initial_df = pd.DataFrame(initial_data)
         initial_result = evaluate(
             initial_df,
-            metrics=[
-                context_recall,
-                context_relevancy
-            ]
+            metrics=[ContextRelevance]
         )
-        
+
         # 转换为现有结果格式
         metrics = result.to_dict()
         initial_metrics = initial_result.to_dict()
-        
+
         # 确保所有数值都是Python原生类型
         metrics = {k: float(v) if isinstance(v, (np.float32, np.float64)) else v for k, v in metrics.items()}
         initial_metrics = {k: float(v) if isinstance(v, (np.float32, np.float64)) else v for k, v in initial_metrics.items()}
-        
-        precision = float(metrics.get('context_relevancy', 0.0))
-        recall = float(metrics.get('context_recall', 0.0))
-        f1 = float(2 * (precision * recall) / (precision + recall + 1e-9))
-        
+
+        # ContextRelevance评估检索上下文与问题的相关性
+        context_relevance = float(metrics.get('context_relevance', 0.0))
+        initial_context_relevance = float(initial_metrics.get('context_relevance', 0.0))
+
+        # 使用context_relevance作为precision，recall和f1在无监督情况下用相同值
+        precision = context_relevance
+        recall = context_relevance
+        f1 = context_relevance
+
         # 计算改进度
-        context_recall_improvement = float(metrics.get('context_recall', 0.0) - initial_metrics.get('context_recall', 0.0))
-        context_relevancy_improvement = float(metrics.get('context_relevancy', 0.0) - initial_metrics.get('context_relevancy', 0.0))
-        
+        context_relevance_improvement = context_relevance - initial_context_relevance
+
         metrics.update({
-            'context_recall_improvement': context_recall_improvement,
-            'context_relevancy_improvement': context_relevancy_improvement,
-            'initial_context_recall': float(initial_metrics.get('context_recall', 0.0)),
-            'initial_context_relevancy': float(initial_metrics.get('context_relevancy', 0.0)),
+            'context_relevance_improvement': context_relevance_improvement,
+            'initial_context_relevance': initial_context_relevance,
             'k': k
         })
 
