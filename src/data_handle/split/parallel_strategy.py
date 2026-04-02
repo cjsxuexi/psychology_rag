@@ -243,15 +243,11 @@ class ParallelBatchTextSplitterStrategy(BaseTextSplitterStrategy):
             List[str]: 分割后的文本块列表
         """
         from src.data_handle.parser import create_splitter
-        from src.config.config_loader import parse_config_and_set_env
 
         if not text or not text.strip():
             return []
 
-        # 在子进程中解析配置并设置环境变量
-        parse_config_and_set_env()
-
-        # 在子进程中使用create_splitter创建分割器（不传参数，从环境变量获取配置）
+        # 在子进程中使用create_splitter创建分割器（自动从配置读取）
         splitter = create_splitter()
 
         # 使用分割器进行文本分割

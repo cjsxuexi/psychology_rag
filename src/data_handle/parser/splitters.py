@@ -10,7 +10,10 @@ from llama_index.core.node_parser import (
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 
 from src.common.model_util import load_model
-from src.utils.logger import logger
+from src.utils.logger import get_logger
+
+# 获取带上下文的logger实例
+logger = get_logger()
 
 
 class BaseSplitter(ABC):
